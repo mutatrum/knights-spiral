@@ -19,7 +19,7 @@ function runLoop() {
   let totalSearchDepth = 0;
   let completed = false;
 
-  const batchTimeLimit = 16 << currentMipLevel;
+  const batchTimeLimit = 16 << currentMipLevel; // 16ms at MIP 0
 
   // Run for up to batchTimeLimit or until limit/buffer is reached
   const limit = Math.min(MAX_BATCH_SIZE, currentBatchLimit);
@@ -46,20 +46,20 @@ function runLoop() {
       }
     }
   }
-  
+
   if (actualCount > 0) {
     const state = engine.getState();
     const duration = performance.now() - loopStartTime;
-    
+
     // Transfer the current buffer to the main thread
     const transferredBuffer = currentBuffer;
     // Swap to the other buffer for the next round
     currentBuffer = (currentBuffer === bufferA) ? bufferB : bufferA;
 
-    self.postMessage({ 
-      type: 'RESULTS', 
-      payload: { 
-        results: transferredBuffer.buffer, 
+    self.postMessage({
+      type: 'RESULTS',
+      payload: {
+        results: transferredBuffer.buffer,
         count: actualCount,
         step: state.step,
         lowestUnoccupiedN: state.lowestUnoccupiedN,
@@ -107,7 +107,7 @@ self.onmessage = (e) => {
     const oldRunning = running;
     running = true;
     runLoop();
-    running = oldRunning; 
+    running = oldRunning;
   } else if (type === 'RESET') {
     running = false;
     if (engine) {

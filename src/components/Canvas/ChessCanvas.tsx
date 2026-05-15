@@ -17,7 +17,12 @@ const MIP_LEVELS = [
 
 export const ChessCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const tilesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const scratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const scratchImageDataRef = useRef<ImageData | null>(null);
+  
+  const tilesRef = useRef<Map<string, Uint8Array>>(new Map());
+  const canvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const dirtyTilesRef = useRef<Set<string>>(new Set());
   const {
     historyCount,
     maxNProcessed,
@@ -43,17 +48,14 @@ export const ChessCanvas: React.FC = () => {
 
   const lastProcessedN = useRef(-1);
 
-  const getTile = (mip: number, tx: number, ty: number): HTMLCanvasElement => {
+  const getTile = (mip: number, tx: number, ty: number): Uint8Array => {
     const key = `${mip}:${tx}:${ty}`;
     let tile = tilesRef.current.get(key);
     if (!tile) {
-      tile = document.createElement('canvas');
-      tile.width = TILE_SIZE;
-      tile.height = TILE_SIZE;
-      const tctx = tile.getContext('2d', { alpha: true, desynchronized: true });
+      tile = new Uint8Array(TILE_SIZE * TILE_SIZE);
       tilesRef.current.set(key, tile);
-      // Each tile is 512x512x4 bytes = 1MB
-      setDisplayMemory(tilesRef.current.size * 1048576);
+      // Each tile is 512x512 bytes = 256KB
+      setDisplayMemory(tilesRef.current.size * 262144);
     }
     return tile;
   };
@@ -85,12 +87,20 @@ export const ChessCanvas: React.FC = () => {
       const tx0 = Math.floor((x * level0.scale) / TILE_SIZE);
       const ty0 = Math.floor((-y * level0.scale) / TILE_SIZE);
       const tile0 = getTile(0, tx0, ty0);
-      const tctx0 = tile0.getContext('2d');
-      if (tctx0) {
-        tctx0.fillStyle = player.color;
-        const lx = (x * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
-        const ly = (-y * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
-        tctx0.fillRect(Math.floor(lx), Math.floor(ly), 1, 1);
+      const lx0 = Math.floor((x * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
+      const ly0 = Math.floor((-y * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
+      tile0[ly0 * TILE_SIZE + lx0] = playerId;
+      
+      const key0 = `0:${tx0}:${ty0}`;
+      const cached0 = canvasCacheRef.current.get(key0);
+      if (cached0) {
+        const cctx = cached0.getContext('2d');
+        if (cctx) {
+          cctx.fillStyle = player.color;
+          cctx.fillRect(lx0, ly0, 1, 1);
+        }
+      } else {
+        dirtyTilesRef.current.add(key0);
       }
 
       // For higher MIP levels, deduplicate to avoid redundant fillRect calls
@@ -114,12 +124,18 @@ export const ChessCanvas: React.FC = () => {
         
         if (!dirtySet.has(pixelKey)) {
           dirtySet.add(pixelKey);
-          
           const tile = getTile(m, tx, ty);
-          const tctx = tile.getContext('2d');
-          if (tctx) {
-            tctx.fillStyle = player.color;
-            tctx.fillRect(lx, ly, 1, 1);
+          tile[ly * TILE_SIZE + lx] = playerId;
+          
+          const cached = canvasCacheRef.current.get(tileKey);
+          if (cached) {
+            const cctx = cached.getContext('2d');
+            if (cctx) {
+              cctx.fillStyle = player.color;
+              cctx.fillRect(lx, ly, 1, 1);
+            }
+          } else {
+            dirtyTilesRef.current.add(tileKey);
           }
         }
       }
@@ -137,21 +153,26 @@ export const ChessCanvas: React.FC = () => {
   // Reset tiles on restart
   useEffect(() => {
     if (historyCount === 0) {
-      tilesRef.current.forEach(tile => {
-        tile.width = 0;
-        tile.height = 0;
-      });
       tilesRef.current.clear();
+      canvasCacheRef.current.clear();
+      dirtyTilesRef.current.clear();
       setDisplayMemory(0);
       lastProcessedN.current = -1;
       draw();
     }
   }, [historyCount]);
 
+  const hexToRgb = (hex: string): [number, number, number] => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
+  };
+
   const draw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const startTime = performance.now();
@@ -163,6 +184,24 @@ export const ChessCanvas: React.FC = () => {
       canvas.width = width;
       canvas.height = height;
     }
+
+    // Initialize scratch canvas for indexed tile hydration
+    if (!scratchCanvasRef.current) {
+      const sc = document.createElement('canvas');
+      sc.width = TILE_SIZE;
+      sc.height = TILE_SIZE;
+      scratchCanvasRef.current = sc;
+      scratchImageDataRef.current = sc.getContext('2d')!.createImageData(TILE_SIZE, TILE_SIZE);
+    }
+    const scratchCanvas = scratchCanvasRef.current;
+    const scratchCtx = scratchCanvas.getContext('2d')!;
+    const scratchImageData = scratchImageDataRef.current!;
+
+    // Pre-calculate palette colors as RGB triples
+    const palette = new Map<number, [number, number, number]>();
+    players.forEach(p => {
+      palette.set(p.id, hexToRgb(p.color));
+    });
 
     ctx.fillStyle = voidColor;
     ctx.fillRect(0, 0, width, height);
@@ -238,6 +277,41 @@ export const ChessCanvas: React.FC = () => {
         const key = `${mipLevel}:${tx}:${ty}`;
         const tile = tilesRef.current.get(key);
         if (tile) {
+          let cachedCanvas = canvasCacheRef.current.get(key);
+          
+          // Hydrate if missing or dirty
+          if (!cachedCanvas || dirtyTilesRef.current.has(key)) {
+            if (!cachedCanvas) {
+              cachedCanvas = document.createElement('canvas');
+              cachedCanvas.width = TILE_SIZE;
+              cachedCanvas.height = TILE_SIZE;
+              canvasCacheRef.current.set(key, cachedCanvas);
+            }
+            
+            const cctx = cachedCanvas.getContext('2d')!;
+            const data = scratchImageData.data;
+            for (let i = 0; i < tile.length; i++) {
+              const pId = tile[i];
+              if (pId === 0) {
+                data[i * 4 + 3] = 0;
+              } else {
+                const rgb = palette.get(pId) || [255, 255, 255];
+                data[i * 4] = rgb[0];
+                data[i * 4 + 1] = rgb[1];
+                data[i * 4 + 2] = rgb[2];
+                data[i * 4 + 3] = 255;
+              }
+            }
+            cctx.putImageData(scratchImageData, 0, 0);
+            dirtyTilesRef.current.delete(key);
+            
+            // Limit cache size to prevent memory leaks (e.g. 100 tiles)
+            if (canvasCacheRef.current.size > 100) {
+              const oldestKey = canvasCacheRef.current.keys().next().value;
+              canvasCacheRef.current.delete(oldestKey);
+            }
+          }
+
           const worldX = (tx * TILE_SIZE) / level.scale;
           const worldY = -(ty * TILE_SIZE) / level.scale;
           
@@ -252,7 +326,7 @@ export const ChessCanvas: React.FC = () => {
           const screenW = nextScreenX - screenX;
           const screenH = nextScreenY - screenY;
           
-          ctx.drawImage(tile, screenX, screenY, screenW, screenH);
+          ctx.drawImage(cachedCanvas, screenX, screenY, screenW, screenH);
         }
       }
     }

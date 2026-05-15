@@ -79,7 +79,6 @@ class ChunkedBitset {
 export interface SimulationState {
   step: number;
   currentPlayerIndex: number;
-  grid: Map<number, Uint8Array>;
   dangerGrid: Map<number, Uint32Array>;
   lowestUnoccupiedN: number;
   occupationBitset: ChunkedBitset;
@@ -111,7 +110,6 @@ export class SimulationEngine {
     return {
       step: 0,
       currentPlayerIndex: 0,
-      grid: new Map(),
       dangerGrid: new Map(),
       lowestUnoccupiedN: 0,
       occupationBitset: new ChunkedBitset(),
@@ -145,18 +143,10 @@ export class SimulationEngine {
     return this.lastDangerTile[(x & 511) + ((y & 511) << 9)];
   }
 
-  private setGridValue(x: number, y: number, playerId: number) {
+  private recordPiece(x: number, y: number, playerId: number) {
     const tx = x >> 9;
     const ty = y >> 9;
     const key = (tx << 16) | (ty & 0xFFFF);
-
-    // Occupation Grid
-    let gridTile = this.state.grid.get(key);
-    if (!gridTile) {
-      gridTile = new Uint8Array(262144);
-      this.state.grid.set(key, gridTile);
-    }
-    gridTile[(x & 511) + ((y & 511) << 9)] = playerId;
 
     // Danger Grid
     const playerBit = this.playerBitMap.get(playerId) || 0;
@@ -209,7 +199,7 @@ export class SimulationEngine {
 
         if ((dangerValue & opponentMask) === 0) {
           this.setOccupied(n);
-          this.setGridValue(cx, cy, player.id);
+          this.recordPiece(cx, cy, player.id);
           this.state.step++;
 
           if (cx < this.state.minX) this.state.minX = cx;
@@ -242,7 +232,6 @@ export class SimulationEngine {
   }
 
   public getState() {
-    const gridMem = this.state.grid.size * 262144; // 512*512
     const dangerMem = this.state.dangerGrid.size * 1048576; // 512*512*4
     const bitsetMem = this.state.occupationBitset.allocatedBytes;
     const bufferMem = spiralPieces.allocatedBytes;
@@ -250,7 +239,7 @@ export class SimulationEngine {
     return {
       step: this.state.step,
       lowestUnoccupiedN: this.state.lowestUnoccupiedN,
-      memoryUsed: gridMem + dangerMem + bitsetMem + bufferMem, // Total bytes
+      memoryUsed: dangerMem + bitsetMem + bufferMem, // Total bytes
       activeTiles: this.state.dangerGrid.size,
       freedTiles: this.totalFreedTiles,
       bounds: {
