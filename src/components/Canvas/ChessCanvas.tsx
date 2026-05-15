@@ -1,12 +1,18 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { useStore, pieceN, pieceX, pieceY, pieceP, piecesLookup, piecesCount } from '../../store/useStore';
+import { useStore } from '../../store/useStore';
+import { MAX_N, spiralPieces } from '../../engine/simulation';
 import { PIECE_LIBRARY } from '../../engine/pieces';
+import { numberToCoord, coordToNumber } from '../../engine/spiral';
 
 const TILE_SIZE = 512;
 const MIP_LEVELS = [
   { scale: 1.0 },
   { scale: 0.5 },
-  { scale: 0.25 }
+  { scale: 0.25 },
+  { scale: 0.125 },
+  { scale: 0.0625 },
+  { scale: 0.03125 },
+  { scale: 0.015625 }
 ];
 
 export const ChessCanvas: React.FC = () => {
@@ -14,12 +20,17 @@ export const ChessCanvas: React.FC = () => {
   const tilesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const {
     historyCount,
+    maxNProcessed,
+    lowestUnoccupiedN,
+    lastBatchResults,
     players,
     voidColor,
     playfieldColor,
     bounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 },
     setDrawTime,
-    setMipLevel
+    setDisplayMemory,
+    setMipLevel,
+    worker // Added
   } = useStore();
 
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -30,7 +41,7 @@ export const ChessCanvas: React.FC = () => {
   const [hoveredPiece, setHoveredPiece] = useState<{ n: number; x: number; y: number; playerId: number } | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-  const lastProcessedIndex = useRef(0);
+  const lastProcessedN = useRef(-1);
 
   const getTile = (mip: number, tx: number, ty: number): HTMLCanvasElement => {
     const key = `${mip}:${tx}:${ty}`;
@@ -39,48 +50,89 @@ export const ChessCanvas: React.FC = () => {
       tile = document.createElement('canvas');
       tile.width = TILE_SIZE;
       tile.height = TILE_SIZE;
-      // Use alpha: true to allow the board background to show through
       const tctx = tile.getContext('2d', { alpha: true, desynchronized: true });
       tilesRef.current.set(key, tile);
+      // Each tile is 512x512x4 bytes = 1MB
+      setDisplayMemory(tilesRef.current.size * 1048576);
     }
     return tile;
   };
 
-  // Incremental update to backing tiles
   useEffect(() => {
-    const start = lastProcessedIndex.current;
-    const end = piecesCount;
-    if (start === end) return;
+    if (!lastBatchResults) return;
 
-    for (let i = start; i < end; i++) {
-      const x = pieceX[i];
-      const y = pieceY[i];
-      const playerId = pieceP[i];
+    // Use sets to deduplicate updates for higher MIP levels within a single batch
+    const mipDirtyPixels = new Map<string, Set<number>>();
+    const count = lastBatchResults.length / 5;
+
+    for (let i = 0; i < count; i++) {
+      const n = lastBatchResults[i * 5];
+      const x = lastBatchResults[i * 5 + 1];
+      const y = lastBatchResults[i * 5 + 2];
+      const playerId = lastBatchResults[i * 5 + 3];
+
+      if (playerId === 0) continue;
       
-      const player = players.find(p => p.id === playerId);
-      if (!player) continue;
+      spiralPieces.set(n, playerId);
+      
+      let player = players.find(p => p.id === playerId);
+      if (!player) {
+        player = { id: playerId, color: '#fff', pieceType: { a: 1, b: 1 } };
+      }
 
-      for (let m = 0; m < MIP_LEVELS.length; m++) {
+      // Always update MIP 0 (highest detail)
+      const level0 = MIP_LEVELS[0];
+      const tx0 = Math.floor((x * level0.scale) / TILE_SIZE);
+      const ty0 = Math.floor((-y * level0.scale) / TILE_SIZE);
+      const tile0 = getTile(0, tx0, ty0);
+      const tctx0 = tile0.getContext('2d');
+      if (tctx0) {
+        tctx0.fillStyle = player.color;
+        const lx = (x * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
+        const ly = (-y * level0.scale % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
+        tctx0.fillRect(Math.floor(lx), Math.floor(ly), 1, 1);
+      }
+
+      // For higher MIP levels, deduplicate to avoid redundant fillRect calls
+      for (let m = 1; m < MIP_LEVELS.length; m++) {
         const level = MIP_LEVELS[m];
         const px = x * level.scale;
         const py = -y * level.scale;
         const tx = Math.floor(px / TILE_SIZE);
         const ty = Math.floor(py / TILE_SIZE);
+        const lx = Math.floor((px % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
+        const ly = Math.floor((py % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
         
-        const tile = getTile(m, tx, ty);
-        const tctx = tile.getContext('2d');
-        if (tctx) {
-          tctx.fillStyle = player.color;
-          const lx = (px % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
-          const ly = (py % TILE_SIZE + TILE_SIZE) % TILE_SIZE;
-          tctx.fillRect(Math.floor(lx), Math.floor(ly), 1, 1);
+        const tileKey = `${m}:${tx}:${ty}`;
+        const pixelKey = (lx << 16) | ly;
+        
+        let dirtySet = mipDirtyPixels.get(tileKey);
+        if (!dirtySet) {
+          dirtySet = new Set();
+          mipDirtyPixels.set(tileKey, dirtySet);
+        }
+        
+        if (!dirtySet.has(pixelKey)) {
+          dirtySet.add(pixelKey);
+          
+          const tile = getTile(m, tx, ty);
+          const tctx = tile.getContext('2d');
+          if (tctx) {
+            tctx.fillStyle = player.color;
+            tctx.fillRect(lx, ly, 1, 1);
+          }
         }
       }
     }
 
-    lastProcessedIndex.current = end;
+    lastProcessedN.current = maxNProcessed;
     draw();
-  }, [historyCount, players]);
+
+    // After drawing, return the buffer to the worker for recycling
+    if (worker && lastBatchResults) {
+      worker.postMessage({ type: 'ACK', payload: { buffer: lastBatchResults.buffer } }, [lastBatchResults.buffer]);
+    }
+  }, [historyCount, lastBatchResults, players, worker]);
 
   // Reset tiles on restart
   useEffect(() => {
@@ -90,7 +142,8 @@ export const ChessCanvas: React.FC = () => {
         tile.height = 0;
       });
       tilesRef.current.clear();
-      lastProcessedIndex.current = 0;
+      setDisplayMemory(0);
+      lastProcessedN.current = -1;
       draw();
     }
   }, [historyCount]);
@@ -103,15 +156,20 @@ export const ChessCanvas: React.FC = () => {
 
     const startTime = performance.now();
     const pixelRatio = window.devicePixelRatio || 1;
-    const width = canvas.width;
-    const height = canvas.height;
+    const width = canvas.clientWidth * pixelRatio;
+    const height = canvas.clientHeight * pixelRatio;
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
 
     ctx.fillStyle = voidColor;
     ctx.fillRect(0, 0, width, height);
 
-    const centerX = width / 2 + offset.x * pixelRatio;
-    const centerY = height / 2 + offset.y * pixelRatio;
     const currentScale = scale * pixelRatio;
+    const centerX = width / 2 + offset.x * pixelRatio - 0.5 * currentScale;
+    const centerY = height / 2 + offset.y * pixelRatio - 0.5 * currentScale;
 
     // Board (Playfield)
     const boardX = centerX + bounds.minX * currentScale;
@@ -182,6 +240,7 @@ export const ChessCanvas: React.FC = () => {
         if (tile) {
           const worldX = (tx * TILE_SIZE) / level.scale;
           const worldY = -(ty * TILE_SIZE) / level.scale;
+          
           const screenX = Math.round(centerX + worldX * currentScale);
           const screenY = Math.round(centerY - worldY * currentScale);
           
@@ -210,13 +269,14 @@ export const ChessCanvas: React.FC = () => {
 
       for (let gx = minX; gx <= maxX; gx++) {
         for (let gy = minY; gy <= maxY; gy++) {
-          const key = (gx + 32768) << 16 | (gy + 32768);
-          const idx = piecesLookup.get(key);
-          if (idx !== undefined) {
-            const n = pieceN[idx];
-            const px = centerX + (gx + 0.5) * currentScale;
-            const py = centerY - (gy - 0.5) * currentScale;
-            ctx.fillText(n.toLocaleString(), px, py + currentScale / 8);
+          const n = coordToNumber(gx, gy);
+          if (n < MAX_N) {
+            const playerId = spiralPieces.get(n);
+            if (playerId !== 0) {
+              const px = centerX + (gx + 0.5) * currentScale;
+              const py = centerY - (gy - 0.5) * currentScale;
+              ctx.fillText(n.toLocaleString(), px, py + currentScale / 8);
+            }
           }
         }
       }
@@ -251,28 +311,17 @@ export const ChessCanvas: React.FC = () => {
     const boardW = (maxAbsX * 2 + 2);
     const boardH = (maxAbsY * 2 + 2);
 
-    const targetScale = Math.min(width / boardW, height / boardH) * padding;
-    setScale(Math.max(0.000001, targetScale));
-    setOffset({ x: 0, y: 0 });
+    const scaleX = (width * padding) / boardW;
+    const scaleY = (height * padding) / boardH;
+    // Cap auto-zoom at 50 to avoid crazy zooming on empty board
+    const newScale = Math.max(0.01, Math.min(50, Math.min(scaleX, scaleY)));
+    
+    if (newScale > 0 && isFinite(newScale)) {
+      setScale(newScale);
+      setOffset({ x: 0, y: 0 });
+    }
   }, [bounds, isAutoZoom]);
 
-  // Resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = canvas.offsetWidth * dpr;
-        canvas.height = canvas.offsetHeight * dpr;
-        draw();
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Interactivity Handlers
   const onMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     setIsAutoZoom(false);
@@ -280,74 +329,83 @@ export const ChessCanvas: React.FC = () => {
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    const dpr = window.devicePixelRatio || 1;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * dpr;
-    const my = (e.clientY - rect.top) * dpr;
-
     if (isDragging) {
-      const dx = (e.clientX - lastMouse.x);
-      const dy = (e.clientY - lastMouse.y);
+      const dx = e.clientX - lastMouse.x;
+      const dy = e.clientY - lastMouse.y;
       setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
       setLastMouse({ x: e.clientX, y: e.clientY });
     }
 
-    // Hover detection
-    const currentScale = scale * dpr;
-    const centerX = canvas.width / 2 + offset.x * dpr;
-    const centerY = canvas.height / 2 + offset.y * dpr;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
+    const my = (e.clientY - rect.top) * (window.devicePixelRatio || 1);
+
+    const pixelRatio = window.devicePixelRatio || 1;
+    const width = canvas.width;
+    const height = canvas.height;
+    const currentScale = scale * pixelRatio;
+    const centerX = width / 2 + offset.x * pixelRatio - 0.5 * currentScale;
+    const centerY = height / 2 + offset.y * pixelRatio - 0.5 * currentScale;
+
     const gx = Math.floor((mx - centerX) / currentScale);
-    const gy = Math.floor((centerY - my) / currentScale) + 1;
-    
-    const key = (gx + 32768) << 16 | (gy + 32768);
-    const idx = piecesLookup.get(key);
-    if (idx !== undefined) {
-      setHoveredPiece({ n: pieceN[idx], x: gx, y: gy, playerId: pieceP[idx] });
-      setTooltipPos({ x: e.clientX, y: e.clientY });
+    const gy = Math.ceil((centerY - my) / currentScale);
+
+    const n = coordToNumber(gx, gy);
+    if (n < MAX_N) {
+      const playerId = spiralPieces.get(n);
+      if (playerId !== 0) {
+        setHoveredPiece({ n, x: gx, y: gy, playerId });
+        setTooltipPos({ x: e.clientX, y: e.clientY });
+      } else {
+        setHoveredPiece(null);
+      }
     } else {
       setHoveredPiece(null);
     }
   };
 
   const onMouseUp = () => setIsDragging(false);
-
+  
   const onWheel = (e: React.WheelEvent) => {
     setIsAutoZoom(false);
-    const zoomSpeed = 1.1;
-    const factor = e.deltaY > 0 ? 1 / zoomSpeed : zoomSpeed;
+    const zoomSpeed = 0.001;
+    const delta = -e.deltaY;
+    const factor = Math.pow(1.1, delta / 100);
+    const newScale = Math.max(0.01, Math.min(50, scale * factor));
     
-    const dpr = window.devicePixelRatio || 1;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * dpr;
-    const my = (e.clientY - rect.top) * dpr;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      
+      const centerX = (canvas.offsetWidth / 2 + offset.x) - 0.5 * scale;
+      const centerY = (canvas.offsetHeight / 2 + offset.y) - 0.5 * scale;
+      
+      const worldX = (mx - centerX) / scale;
+      const worldY = Math.ceil((centerY - my) * 1000) / 1000 / scale; // Use precision to avoid floating point issues
+      
+      const newCenterX = (canvas.offsetWidth / 2 + worldX * newScale) - 0.5 * newScale;
+      const newCenterY = (canvas.offsetHeight / 2 - worldY * newScale) - 0.5 * newScale;
 
-    const centerX = canvas.width / 2 + offset.x * dpr;
-    const centerY = canvas.height / 2 + offset.y * dpr;
-    const currentScale = scale * dpr;
+      const newOffsetX = mx - newCenterX;
+      const newOffsetY = newCenterY - my;
 
-    const worldX = (mx - centerX) / currentScale;
-    const worldY = (centerY - my) / currentScale;
-
-    const newScale = Math.min(1000, Math.max(0.000001, scale * factor));
-    const newCurrentScale = newScale * dpr;
-    const newOffsetX = (mx - canvas.width / 2 - worldX * newCurrentScale) / dpr;
-    const newOffsetY = (my - canvas.height / 2 + worldY * newCurrentScale) / dpr;
-
-    setScale(newScale);
-    setOffset({ x: newOffsetX, y: newOffsetY });
+      setScale(newScale);
+      setOffset({ x: newOffsetX, y: -newOffsetY });
+    }
   };
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: voidColor }}>
+    <div className="canvas-container" style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
       <canvas
         ref={canvasRef}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
         onWheel={onWheel}
         style={{ width: '100%', height: '100%', display: 'block', cursor: isDragging ? 'grabbing' : 'crosshair' }}
       />
@@ -357,41 +415,37 @@ export const ChessCanvas: React.FC = () => {
           left: tooltipPos.x + 15,
           top: tooltipPos.y + 15,
           background: 'rgba(0,0,0,0.85)',
-          backdropFilter: 'blur(4px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          padding: '0.5rem 0.75rem',
-          borderRadius: '0.5rem',
+          color: 'white',
+          padding: '8px 12px',
+          borderRadius: '6px',
+          fontSize: '12px',
           pointerEvents: 'none',
           zIndex: 1000,
+          border: '1px solid rgba(255,255,255,0.1)',
+          backdropFilter: 'blur(4px)',
           boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
         }}>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Piece #{hoveredPiece.n.toLocaleString()}</div>
-          <div style={{ fontSize: '0.9rem', color: 'white', fontWeight: 700, margin: '0.1rem 0' }}>
-            {(() => {
-                const p = players.find(pl => pl.id === hoveredPiece.playerId);
-                if (!p) return 'Unknown';
-                const pieceKey = Object.keys(PIECE_LIBRARY).find(k => 
-                  PIECE_LIBRARY[k].leap.a === p.pieceType.a && PIECE_LIBRARY[k].leap.b === p.pieceType.b
-                );
-                return pieceKey ? PIECE_LIBRARY[pieceKey].name : 'Custom Piece';
-            })()}
+          <div style={{ fontWeight: 'bold', marginBottom: '4px', color: players.find(p => p.id === hoveredPiece.playerId)?.color }}>
+            {PIECE_LIBRARY.KNIGHT.name} #{hoveredPiece.n.toLocaleString()}
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Coord: ({hoveredPiece.x}, {hoveredPiece.y})</div>
-          <div style={{ marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: players.find(p => p.id === hoveredPiece.playerId)?.color }} />
-            <span style={{ fontSize: '0.75rem', color: 'white' }}>Player {hoveredPiece.playerId}</span>
-          </div>
+          <div>Coord: ({hoveredPiece.x}, {hoveredPiece.y})</div>
+          <div>Player: {hoveredPiece.playerId}</div>
         </div>
       )}
-      <div style={{
-        position: 'absolute',
-        bottom: '1rem',
-        right: '1rem',
-        display: 'flex',
-        gap: '0.5rem'
-      }}>
-        <button className={`secondary ${isAutoZoom ? 'active' : ''}`} onClick={() => setIsAutoZoom(!isAutoZoom)} style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem' }}>
-          Auto-Zoom
+      <div className="canvas-controls" style={{ position: 'absolute', bottom: '1rem', right: '1rem', display: 'flex', gap: '0.5rem' }}>
+        <button 
+          className={isAutoZoom ? 'primary' : 'secondary'} 
+          onClick={() => setIsAutoZoom(!isAutoZoom)}
+          style={{ padding: '0.5rem 1rem', fontSize: '0.75rem' }}
+        >
+          {isAutoZoom ? 'Auto-Zoom On' : 'Manual View'}
+        </button>
+        <button 
+          className="secondary" 
+          onClick={() => { setOffset({ x: 0, y: 0 }); setScale(20); }}
+          style={{ padding: '0.5rem 1rem', fontSize: '0.75rem' }}
+        >
+          Reset View
         </button>
       </div>
     </div>

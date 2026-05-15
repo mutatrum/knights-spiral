@@ -1,5 +1,7 @@
 import React from 'react';
-import { useStore, pieceN, pieceX, pieceY, pieceP, piecesCount } from '../../store/useStore';
+import { useStore, maxNProcessed } from '../../store/useStore';
+import { spiralPieces } from '../../engine/simulation';
+import { numberToCoord } from '../../engine/spiral';
 import { Download, FileJson, Image as ImageIcon } from 'lucide-react';
 
 export const ExportTools: React.FC = React.memo(() => {
@@ -7,13 +9,12 @@ export const ExportTools: React.FC = React.memo(() => {
 
   const exportJSON = () => {
     const pieces = [];
-    for (let i = 0; i < piecesCount; i++) {
-      pieces.push({
-        n: pieceN[i],
-        x: pieceX[i],
-        y: pieceY[i],
-        playerId: pieceP[i]
-      });
+    for (let i = 0; i <= maxNProcessed; i++) {
+      const pId = spiralPieces.get(i);
+      if (pId !== 0) {
+        const { x, y } = numberToCoord(i);
+        pieces.push({ n: i, x, y, playerId: pId });
+      }
     }
 
     const data = {

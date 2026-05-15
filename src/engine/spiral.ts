@@ -21,7 +21,9 @@ export function numberToCoord(n: number): Point {
   // Determine the "layer" k (distance from center)
   // Layer k has (2k+1)^2 total squares (including all previous layers)
   // The side length of layer k is 2k.
-  const k = Math.ceil((Math.sqrt(n + 1) - 1) / 2);
+  let s = Math.floor(Math.sqrt(n));
+  if ((s + 1) * (s + 1) <= n) s++;
+  const k = (s + 1) >> 1;
   const t = 2 * k; // Side length step
   
   // Max n in the previous layer (k-1)

@@ -1,6 +1,39 @@
 import type { Point } from './spiral';
-import { numberToCoord, coordToNumber } from './spiral';
+import { numberToCoord } from './spiral';
 import { getAttackOffsets } from './pieces';
+
+export const MAX_N = 1_000_000_000;
+const CHUNK_SIZE = 10_000_000;
+
+class ChunkedPieceBuffer {
+  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / CHUNK_SIZE)).fill(null);
+
+  public get(n: number): number {
+    const chunkIdx = Math.floor(n / CHUNK_SIZE);
+    const chunk = this.chunks[chunkIdx];
+    if (!chunk) return 0;
+    return chunk[n % CHUNK_SIZE];
+  }
+
+  public set(n: number, val: number) {
+    const chunkIdx = Math.floor(n / CHUNK_SIZE);
+    if (!this.chunks[chunkIdx]) {
+      this.chunks[chunkIdx] = new Uint8Array(CHUNK_SIZE);
+    }
+    this.chunks[chunkIdx]![n % CHUNK_SIZE] = val;
+  }
+
+  get allocatedBytes(): number {
+    // Return actual memory used
+    return this.chunks.filter(c => c !== null).length * CHUNK_SIZE;
+  }
+
+  public reset() {
+    this.chunks.fill(null);
+  }
+}
+
+export const spiralPieces = new ChunkedPieceBuffer();
 
 export interface Player {
   id: number;
@@ -11,55 +44,77 @@ export interface Player {
   };
 }
 
-const GRID_SIZE = 16384;
-const GRID_OFFSET = 8192;
+class ChunkedBitset {
+  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / (8 * 1024 * 1024))).fill(null);
+  private CHUNK_SIZE = 1024 * 1024; // 1MB per chunk = 8M bits
 
-const HASH_SIZE = 1 << 24; 
-const HASH_MASK = HASH_SIZE - 1;
+  public get(n: number): boolean {
+    const bitIdx = n;
+    const chunkIdx = Math.floor(bitIdx / (8 * this.CHUNK_SIZE));
+    const chunk = this.chunks[chunkIdx];
+    if (!chunk) return false;
+    const offset = bitIdx % (8 * this.CHUNK_SIZE);
+    return (chunk[offset >> 3] & (1 << (offset & 7))) !== 0;
+  }
+
+  public set(n: number) {
+    const bitIdx = n;
+    const chunkIdx = Math.floor(bitIdx / (8 * this.CHUNK_SIZE));
+    if (!this.chunks[chunkIdx]) {
+      this.chunks[chunkIdx] = new Uint8Array(this.CHUNK_SIZE);
+    }
+    const offset = bitIdx % (8 * this.CHUNK_SIZE);
+    this.chunks[chunkIdx]![offset >> 3] |= (1 << (offset & 7));
+  }
+
+  public clear() {
+    this.chunks.fill(null);
+  }
+
+  get allocatedBytes(): number {
+    return this.chunks.filter(c => c !== null).length * this.CHUNK_SIZE;
+  }
+}
 
 export interface SimulationState {
   step: number;
   currentPlayerIndex: number;
-  grid: Uint8Array; 
-  dangerGrid: Uint8Array; 
-  lookupTable: BigUint64Array; // Overflow hash table
-  lookupOccupied: Uint32Array;
+  grid: Map<number, Uint8Array>;
+  dangerGrid: Map<number, Uint32Array>;
   lowestUnoccupiedN: number;
-  occupationBitset: Uint8Array; 
-  lastCheckedN: number[]; 
+  occupationBitset: ChunkedBitset;
+  lastCheckedN: number[];
   minX: number;
   maxX: number;
   minY: number;
   maxY: number;
 }
 
-const MAX_N = 200000000;
-
 export class SimulationEngine {
   private players: Player[];
   private state: SimulationState;
-  
-  private playerBits: number[];
   private attackOffsets: Map<number, Point[]>;
+  private playerBitMap: Map<number, number> = new Map();
+  private totalFreedTiles: number = 0;
+  private lastTileKey: number = -1;
+  private lastDangerTile: Uint32Array | null = null;
 
   constructor(players: Player[]) {
     this.players = players;
-    this.playerBits = players.map((_, i) => 1 << i);
-    this.state = this.createInitialState();
     this.attackOffsets = new Map();
+    this.playerBitMap = new Map(); // Added
     this.updateAttackOffsets();
+    this.state = this.createInitialState();
   }
 
   private createInitialState(): SimulationState {
     return {
       step: 0,
       currentPlayerIndex: 0,
-      grid: new Uint8Array(GRID_SIZE * GRID_SIZE),
-      dangerGrid: new Uint8Array(GRID_SIZE * GRID_SIZE),
-      lookupTable: new BigUint64Array(HASH_SIZE),
-      lookupOccupied: new Uint32Array(HASH_SIZE >>> 5),
+      grid: new Map(),
+      dangerGrid: new Map(),
       lowestUnoccupiedN: 0,
-      occupationBitset: new Uint8Array(Math.ceil(MAX_N / 8)),
+      occupationBitset: new ChunkedBitset(),
       lastCheckedN: new Array(this.players.length).fill(0),
       minX: 0,
       maxX: 0,
@@ -69,176 +124,135 @@ export class SimulationEngine {
   }
 
   private updateAttackOffsets() {
-    this.players.forEach(p => {
+    this.players.forEach((p, i) => {
       this.attackOffsets.set(p.id, getAttackOffsets(p.pieceType.a, p.pieceType.b));
+      this.playerBitMap.set(p.id, 1 << i);
     });
   }
 
-  private isOccupied(n: number): boolean {
-    if (n >= MAX_N) return true; 
-    return (this.state.occupationBitset[n >> 3] & (1 << (n & 7))) !== 0;
-  }
+  private getDangerValue(x: number, y: number): number {
+    const tx = x >> 9;
+    const ty = y >> 9;
+    const key = (tx << 16) | (ty & 0xFFFF);
 
-  private setOccupied(n: number) {
-    if (n < MAX_N) {
-      this.state.occupationBitset[n >> 3] |= (1 << (n & 7));
+    if (key !== this.lastTileKey) {
+      const dangerTile = this.state.dangerGrid.get(key) || null;
+      this.lastTileKey = key;
+      this.lastDangerTile = dangerTile;
     }
-  }
 
-  private getGridValue(x: number, y: number): number {
-    const gx = x + GRID_OFFSET;
-    const gy = y + GRID_OFFSET;
-    if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
-      return this.state.grid[gx + gy * GRID_SIZE];
-    }
-    
-    // Overflow Hash Table Lookup
-    const uKey = ((x + 32768) << 16 | (y + 32768)) >>> 0;
-    let h = uKey;
-    h ^= h >>> 16;
-    h = Math.imul(h, 0x85ebca6b);
-    h ^= h >>> 13;
-    h = Math.imul(h, 0xc2b2ae35);
-    h ^= h >>> 16;
-    let idx = (h & HASH_MASK);
-    const { lookupOccupied, lookupTable } = this.state;
-
-    while (lookupOccupied[idx >>> 5] & (1 << (idx & 31))) {
-      const entry = lookupTable[idx];
-      if (Number(entry >> 32n) === uKey) return Number(entry & 0xFFFFFFFFn);
-      idx = (idx + 1) & HASH_MASK;
-    }
-    return 0;
+    if (!this.lastDangerTile) return 0;
+    return this.lastDangerTile[(x & 511) + ((y & 511) << 9)];
   }
 
   private setGridValue(x: number, y: number, playerId: number) {
-    const gx = x + GRID_OFFSET;
-    const gy = y + GRID_OFFSET;
-    
-    if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
-      this.state.grid[gx + gy * GRID_SIZE] = playerId;
-    } else {
-      // Overflow Hash Table Set
-      const uKey = ((x + 32768) << 16 | (y + 32768)) >>> 0;
-      let h = uKey;
-      h ^= h >>> 16;
-      h = Math.imul(h, 0x85ebca6b);
-      h ^= h >>> 13;
-      h = Math.imul(h, 0xc2b2ae35);
-      h ^= h >>> 16;
-      let idx = (h & HASH_MASK);
-      const { lookupOccupied, lookupTable } = this.state;
+    const tx = x >> 9;
+    const ty = y >> 9;
+    const key = (tx << 16) | (ty & 0xFFFF);
 
-      while (lookupOccupied[idx >>> 5] & (1 << (idx & 31))) {
-        if (Number(lookupTable[idx] >> 32n) === uKey) break;
-        idx = (idx + 1) & HASH_MASK;
-      }
-      lookupOccupied[idx >>> 5] |= (1 << (idx & 31));
-      lookupTable[idx] = (BigInt(uKey) << 32n) | BigInt(playerId);
+    // Occupation Grid
+    let gridTile = this.state.grid.get(key);
+    if (!gridTile) {
+      gridTile = new Uint8Array(262144);
+      this.state.grid.set(key, gridTile);
     }
+    gridTile[(x & 511) + ((y & 511) << 9)] = playerId;
 
+    // Danger Grid
+    const playerBit = this.playerBitMap.get(playerId) || 0;
     const offsets = this.attackOffsets.get(playerId) || [];
-    const pIdx = this.players.findIndex(p => p.id === playerId);
-    const playerBit = this.playerBits[pIdx];
-    
-    for (const [dx, dy] of offsets) {
-      const ax = gx + dx;
-      const ay = gy + dy;
-      if (ax >= 0 && ax < GRID_SIZE && ay >= 0 && ay < GRID_SIZE) {
-        this.state.dangerGrid[ax + ay * GRID_SIZE] |= playerBit;
+
+    for (let j = 0; j < offsets.length; j++) {
+      const off = offsets[j];
+      const ax = x + off[0];
+      const ay = y + off[1];
+      const atx = ax >> 9;
+      const aty = ay >> 9;
+      const aKey = (atx << 16) | (aty & 0xFFFF);
+
+      let dangerTile = this.state.dangerGrid.get(aKey);
+      if (!dangerTile) {
+        dangerTile = new Uint32Array(262144);
+        this.state.dangerGrid.set(aKey, dangerTile);
+      }
+      dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
+
+      // Update cache if we modified the active tile
+      if (aKey === this.lastTileKey) {
+        this.lastDangerTile = dangerTile;
       }
     }
   }
 
-  /**
-   * Performs one turn: find the smallest n available for the current player.
-   */
+  private isOccupied(n: number): boolean {
+    return this.state.occupationBitset.get(n);
+  }
+
+  private setOccupied(n: number) {
+    this.state.occupationBitset.set(n);
+  }
+
   public step(): { n: number; x: number; y: number; playerId: number; searchDepth: number } | null {
     const playerIndex = this.state.currentPlayerIndex;
     const player = this.players[playerIndex];
-    const opponentMask = ~(1 << playerIndex);
-    
+    const playerBit = 1 << playerIndex;
+    const opponentMask = ~playerBit;
+
     let n = Math.max(this.state.lowestUnoccupiedN, this.state.lastCheckedN[playerIndex]);
     let searchDepth = 0;
 
-    // Fast coordinate lookup with layer caching
-    let currentK = -1;
-    let layerM = -1;
-    let nextLayerN = -1;
-    let layerSide = -1;
 
-    while (true) {
-      // Check occupation using bitset
-      if ((this.state.occupationBitset[n >> 3] & (1 << (n & 7))) !== 0) {
-        if (n === this.state.lowestUnoccupiedN) this.state.lowestUnoccupiedN++;
-      } else {
-        // Optimized coordinate calculation
-        if (n >= nextLayerN || n < layerM) {
-          currentK = n === 0 ? 0 : Math.ceil((Math.sqrt(n + 1) - 1) / 2);
-          layerM = currentK === 0 ? 0 : Math.pow(2 * currentK - 1, 2);
-          layerSide = 2 * currentK;
-          nextLayerN = Math.pow(2 * currentK + 1, 2);
-        }
-
-        let cx, cy;
-        if (n === 0) {
-          cx = 0; cy = 0;
-        } else {
-          const i = n - layerM;
-          const t = layerSide;
-          const k = currentK;
-          if (i < t) { cx = k; cy = -k + 1 + i; }
-          else if (i < 2 * t) { cx = k - 1 - (i - t); cy = k; }
-          else if (i < 3 * t) { cx = -k; cy = k - 1 - (i - 2 * t); }
-          else { cx = -k + 1 + (i - 3 * t); cy = -k; }
-        }
-
-        const gx = cx + GRID_OFFSET;
-        const gy = cy + GRID_OFFSET;
-        let dangerValue = 0;
-        
-        if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
-          dangerValue = this.state.dangerGrid[gx + gy * GRID_SIZE];
-        } else {
-          for (let idx = 0; idx < this.players.length; idx++) {
-            const p = this.players[idx];
-            const offsets = this.attackOffsets.get(p.id) || [];
-            for (const [dx, dy] of offsets) {
-              if (this.getGridValue(cx - dx, cy - dy) === p.id) {
-                dangerValue |= (1 << idx);
-                break;
-              }
-            }
-          }
-        }
+    while (n < MAX_N) {
+      if (!this.isOccupied(n)) {
+        const { x: cx, y: cy } = numberToCoord(n);
+        const dangerValue = this.getDangerValue(cx, cy);
 
         if ((dangerValue & opponentMask) === 0) {
           this.setOccupied(n);
           this.setGridValue(cx, cy, player.id);
           this.state.step++;
-          
-          this.state.minX = Math.min(this.state.minX, cx);
-          this.state.maxX = Math.max(this.state.maxX, cx);
-          this.state.minY = Math.min(this.state.minY, cy);
-          this.state.maxY = Math.max(this.state.maxY, cy);
-          
-          const result = { n, x: cx, y: cy, playerId: player.id, searchDepth };
-          if (n === this.state.lowestUnoccupiedN) this.state.lowestUnoccupiedN++;
+
+          if (cx < this.state.minX) this.state.minX = cx;
+          if (cx > this.state.maxX) this.state.maxX = cx;
+          if (cy < this.state.minY) this.state.minY = cy;
+          if (cy > this.state.maxY) this.state.maxY = cy;
+
           this.state.lastCheckedN[playerIndex] = n;
           this.state.currentPlayerIndex = (this.state.currentPlayerIndex + 1) % this.players.length;
-          return result;
+
+          if (n === this.state.lowestUnoccupiedN) {
+            while (this.isOccupied(this.state.lowestUnoccupiedN)) {
+              this.state.lowestUnoccupiedN++;
+            }
+          }
+
+          // Periodically prune old danger tiles
+          if (this.state.step % 100000 === 0) {
+            this.pruneTiles();
+          }
+
+          return { n, x: cx, y: cy, playerId: player.id, searchDepth };
         }
         searchDepth++;
       }
-      
       n++;
-      if (n >= MAX_N) return null;
     }
+
+    return null; // Hit MAX_N boundary
   }
 
   public getState() {
+    const gridMem = this.state.grid.size * 262144; // 512*512
+    const dangerMem = this.state.dangerGrid.size * 1048576; // 512*512*4
+    const bitsetMem = this.state.occupationBitset.allocatedBytes;
+    const bufferMem = spiralPieces.allocatedBytes;
+
     return {
       step: this.state.step,
+      lowestUnoccupiedN: this.state.lowestUnoccupiedN,
+      memoryUsed: gridMem + dangerMem + bitsetMem + bufferMem, // Total bytes
+      activeTiles: this.state.dangerGrid.size,
+      freedTiles: this.totalFreedTiles,
       bounds: {
         minX: this.state.minX,
         maxX: this.state.maxX,
@@ -248,7 +262,33 @@ export class SimulationEngine {
     };
   }
 
+  private pruneTiles() {
+    const minLastN = Math.min(...this.state.lastCheckedN);
+    const keysToPrune: number[] = [];
+
+    for (const key of this.state.dangerGrid.keys()) {
+      const tx = (key >> 16);
+      const ty = (key << 16) >> 16;
+
+      const maxX = Math.max(Math.abs(tx * 512), Math.abs((tx + 1) * 512 - 1));
+      const maxY = Math.max(Math.abs(ty * 512), Math.abs((ty + 1) * 512 - 1));
+      const maxDist = Math.max(maxX, maxY);
+      const maxN = (2 * maxDist + 1) * (2 * maxDist + 1);
+
+      if (minLastN > maxN) {
+        keysToPrune.push(key);
+      }
+    }
+
+    for (const key of keysToPrune) {
+      this.state.dangerGrid.delete(key);
+      this.totalFreedTiles++;
+    }
+  }
+
   public reset() {
+    this.totalFreedTiles = 0;
+    spiralPieces.reset();
     this.state = this.createInitialState();
   }
 }

@@ -3,7 +3,8 @@ import { ChessCanvas } from './components/Canvas/ChessCanvas';
 import { PlayerEditor } from './components/Sidebar/PlayerEditor';
 import { PresetGallery } from './components/Sidebar/PresetGallery';
 import { ExportTools } from './components/Sidebar/ExportTools';
-import { useStore, pieceN, piecesCount } from './store/useStore';
+import { useStore, maxNProcessed } from './store/useStore';
+import { MAX_N, spiralPieces } from './engine/simulation';
 import { Play, Pause, RotateCcw, FastForward } from 'lucide-react';
 
 function App() {
@@ -25,7 +26,12 @@ function App() {
     lastDrawTime,
     lastSyncTime,
     lastMipLevel,
-    isCompleted
+    isCompleted,
+    memoryUsed,
+    displayMemory,
+    totalTime,
+    activeTiles,
+    freedTiles
   } = useStore();
 
   const lastHistoryCount = useRef(historyCount);
@@ -47,11 +53,6 @@ function App() {
     }
   }, [historyCount]);
 
-  useEffect(() => {
-    if (isPlaying) {
-      step(speed);
-    }
-  }, [isPlaying, historyCount, speed, step]);
 
   return (
     <>
@@ -133,7 +134,7 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span>Last n:</span>
             <span style={{ color: 'white', fontWeight: 600 }}>
-              {piecesCount > 0 && pieceN[piecesCount - 1] !== undefined ? pieceN[piecesCount - 1].toLocaleString() : '-'}
+              {historyCount > 0 ? maxNProcessed.toLocaleString() : '-'}
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -166,6 +167,32 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
             <span>Search Depth:</span>
             <span>{Math.round(lastSearchDepth).toLocaleString()}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+            <span>Engine Memory:</span>
+            <span>{(memoryUsed / 1024 / 1024).toFixed(1)} MB</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+            <span>Display Memory:</span>
+            <span>{(displayMemory / 1024 / 1024).toFixed(1)} MB</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+            <span>Buffer Memory (Allocated):</span>
+            <span>{(spiralPieces.allocatedBytes / 1024 / 1024).toFixed(1)} MB</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+            <span>Active/Freed Tiles:</span>
+            <span>{activeTiles} / {freedTiles}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
+            <span>Work Time:</span>
+            <span>{(() => {
+              const seconds = Math.floor(totalTime / 1000);
+              const h = Math.floor(seconds / 3600);
+              const m = Math.floor((seconds % 3600) / 60);
+              const s = seconds % 60;
+              return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            })()}</span>
           </div>
         </div>
       </aside>
