@@ -1,16 +1,14 @@
-import { SimulationEngine, Player } from './simulation';
+import { SimulationEngine, type Player } from './simulation';
 import { PIECE_LIBRARY } from './pieces';
 
 const players: Player[] = [
   {
     id: 1,
-    name: 'Player 1',
     color: '#ff0000',
     pieceType: PIECE_LIBRARY.KNIGHT.leap,
   },
   {
     id: 2,
-    name: 'Player 2',
     color: '#0000ff',
     pieceType: PIECE_LIBRARY.KNIGHT.leap,
   }

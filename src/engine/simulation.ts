@@ -1,8 +1,7 @@
-import type { Point } from './spiral';
 import { numberToCoord } from './spiral';
 import { getAttackOffsets } from './pieces';
 
-export const MAX_N = 1_000_000_000;
+export const MAX_N = 1_050_000_000;
 const CHUNK_SIZE = 10_000_000;
 
 class ChunkedPieceBuffer {
@@ -79,7 +78,7 @@ class ChunkedBitset {
 export interface SimulationState {
   step: number;
   currentPlayerIndex: number;
-  dangerGrid: Map<number, Uint32Array>;
+  dangerGrid: Map<number, Uint16Array>;
   lowestUnoccupiedN: number;
   occupationBitset: ChunkedBitset;
   lastCheckedN: number[];
@@ -92,11 +91,11 @@ export interface SimulationState {
 export class SimulationEngine {
   private players: Player[];
   private state: SimulationState;
-  private attackOffsets: Map<number, Point[]>;
+  private attackOffsets: Map<number, [number, number][]>;
   private playerBitMap: Map<number, number> = new Map();
   private totalFreedTiles: number = 0;
   private lastTileKey: number = -1;
-  private lastDangerTile: Uint32Array | null = null;
+  private lastDangerTile: Uint16Array | null = null;
 
   constructor(players: Player[]) {
     this.players = players;
@@ -144,10 +143,6 @@ export class SimulationEngine {
   }
 
   private recordPiece(x: number, y: number, playerId: number) {
-    const tx = x >> 9;
-    const ty = y >> 9;
-    const key = (tx << 16) | (ty & 0xFFFF);
-
     // Danger Grid
     const playerBit = this.playerBitMap.get(playerId) || 0;
     const offsets = this.attackOffsets.get(playerId) || [];
@@ -162,7 +157,7 @@ export class SimulationEngine {
 
       let dangerTile = this.state.dangerGrid.get(aKey);
       if (!dangerTile) {
-        dangerTile = new Uint32Array(262144);
+        dangerTile = new Uint16Array(262144);
         this.state.dangerGrid.set(aKey, dangerTile);
       }
       dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
@@ -232,7 +227,7 @@ export class SimulationEngine {
   }
 
   public getState() {
-    const dangerMem = this.state.dangerGrid.size * 1048576; // 512*512*4
+    const dangerMem = this.state.dangerGrid.size * 524288; // 512*512*2
     const bitsetMem = this.state.occupationBitset.allocatedBytes;
     const bufferMem = spiralPieces.allocatedBytes;
 

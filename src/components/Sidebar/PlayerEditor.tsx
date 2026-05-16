@@ -1,11 +1,12 @@
 import React from 'react';
 import { useStore } from '../../store/useStore';
 import { PIECE_LIBRARY } from '../../engine/pieces';
-import { Trash2, Plus, Users } from 'lucide-react';
+import { Trash2, Plus, Users, ChevronDown, ChevronRight } from 'lucide-react';
 
 export const PlayerEditor: React.FC = React.memo(() => {
   const { players, addPlayer, removePlayer, updatePlayer } = useStore();
   const [customPlayerIds, setCustomPlayerIds] = React.useState<Set<number>>(new Set());
+  const [isOpen, setIsOpen] = React.useState(true);
 
   const handleAdd = () => {
     addPlayer({
@@ -16,12 +17,21 @@ export const PlayerEditor: React.FC = React.memo(() => {
 
   return (
     <div className="control-group">
-      <span className="label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Users size={16} /> Players
-      </span>
+      <div 
+        className="label" 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Users size={16} /> Players
+        </span>
+        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      </div>
       
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        {players.map((p, idx) => {
+      {isOpen && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {players.map((p) => {
           const pieceKey = Object.keys(PIECE_LIBRARY).find(k => 
             PIECE_LIBRARY[k].leap.a === p.pieceType.a && PIECE_LIBRARY[k].leap.b === p.pieceType.b
           );
@@ -136,22 +146,24 @@ export const PlayerEditor: React.FC = React.memo(() => {
         })}
       </div>
 
-      <button 
-        className="secondary" 
-        onClick={handleAdd} 
-        disabled={players.length >= 8}
-        style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          gap: '0.5rem', 
-          fontSize: '0.875rem',
-          opacity: players.length >= 8 ? 0.5 : 1,
-          cursor: players.length >= 8 ? 'not-allowed' : 'pointer'
-        }}
-      >
-        <Plus size={16} /> {players.length >= 8 ? 'Player Limit Reached' : 'Add Player'}
-      </button>
+          <button 
+            className="secondary" 
+            onClick={handleAdd} 
+            disabled={players.length >= 16}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              gap: '0.5rem', 
+              fontSize: '0.875rem',
+              opacity: players.length >= 16 ? 0.5 : 1,
+              cursor: players.length >= 16 ? 'not-allowed' : 'pointer'
+            }}
+          >
+            <Plus size={16} /> {players.length >= 16 ? 'Player Limit Reached' : 'Add Player'}
+          </button>
+        </div>
+      )}
     </div>
   );
 });

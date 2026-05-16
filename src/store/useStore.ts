@@ -103,7 +103,7 @@ export const useStore = create<EngineStore>()(
       newWorker.onmessage = (e) => {
         const { type, payload } = e.data;
         if (type === 'RESULTS') {
-          const { results, count, step, bounds, duration, completed, avgSearchDepth, lowestUnoccupiedN, memoryUsed, activeTiles, freedTiles } = payload;
+          const { results, count, bounds, duration, completed, avgSearchDepth, lowestUnoccupiedN, memoryUsed, activeTiles, freedTiles } = payload;
           const pieces = new Int32Array(results);
 
           const startSync = performance.now();
@@ -235,7 +235,7 @@ export const useStore = create<EngineStore>()(
 
     addPlayer: (player) => {
       const { players } = get();
-      if (players.length >= 8) return;
+      if (players.length >= 16) return;
       const nextId = players.length > 0 ? Math.max(...players.map(p => p.id)) + 1 : 1;
       const newPlayers = [...players, { ...player, id: nextId }];
       set({ players: newPlayers });

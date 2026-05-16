@@ -4,8 +4,8 @@ import { PlayerEditor } from './components/Sidebar/PlayerEditor';
 import { PresetGallery } from './components/Sidebar/PresetGallery';
 import { ExportTools } from './components/Sidebar/ExportTools';
 import { useStore, maxNProcessed } from './store/useStore';
-import { MAX_N, spiralPieces } from './engine/simulation';
-import { Play, Pause, RotateCcw, FastForward } from 'lucide-react';
+import { spiralPieces } from './engine/simulation';
+import { Play, Pause, RotateCcw, FastForward, ChevronDown, ChevronRight, Settings, Activity } from 'lucide-react';
 
 function App() {
   const {
@@ -37,6 +37,8 @@ function App() {
   const lastHistoryCount = useRef(historyCount);
   const lastSpsTime = useRef(performance.now());
   const [sps, setSps] = React.useState(0);
+  const [isWorldOpen, setIsWorldOpen] = React.useState(false);
+  const [isMetricsOpen, setIsMetricsOpen] = React.useState(true);
 
   useEffect(() => {
     initEngine();
@@ -98,32 +100,44 @@ function App() {
             <RotateCcw size={18} /> Reset
           </button>
         </div>
-        <div className="control-group">
-          <span className="label">World Settings</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '0.75rem', opacity: 0.7, flex: 1 }}>Void Color</span>
-              <input
-                type="color"
-                value={voidColor}
-                onChange={(e) => setVoidColor(e.target.value)}
-                style={{ width: '40px', height: '20px', border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '0.75rem', opacity: 0.7, flex: 1 }}>Board Color</span>
-              <input
-                type="color"
-                value={playfieldColor}
-                onChange={(e) => setPlayfieldColor(e.target.value)}
-                style={{ width: '40px', height: '20px', border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}
-              />
-            </div>
-          </div>
-        </div>
-
         <PresetGallery />
         <PlayerEditor />
+        
+        <div className="control-group">
+          <div 
+            className="label" 
+            onClick={() => setIsWorldOpen(!isWorldOpen)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Settings size={16} /> World Settings
+            </span>
+            {isWorldOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </div>
+          {isWorldOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '0.75rem', opacity: 0.7, flex: 1 }}>Void Color</span>
+                <input
+                  type="color"
+                  value={voidColor}
+                  onChange={(e) => setVoidColor(e.target.value)}
+                  style={{ width: '40px', height: '20px', border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '0.75rem', opacity: 0.7, flex: 1 }}>Board Color</span>
+                <input
+                  type="color"
+                  value={playfieldColor}
+                  onChange={(e) => setPlayfieldColor(e.target.value)}
+                  style={{ width: '40px', height: '20px', border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         <ExportTools />
 
         <div className="stats" style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
@@ -147,53 +161,66 @@ function App() {
         </div>
 
         <div className="stats" style={{ marginTop: '0.5rem', opacity: 0.8 }}>
-          <div className="label" style={{ marginBottom: '0.5rem', fontSize: '0.65rem' }}>Performance</div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Batch Time:</span>
-            <span>{lastDuration.toFixed(1)}ms</span>
+          <div 
+            className="label" 
+            onClick={() => setIsMetricsOpen(!isMetricsOpen)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none', marginBottom: isMetricsOpen ? '0.75rem' : 0 }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.65rem' }}>
+              <Activity size={14} /> Performance
+            </span>
+            {isMetricsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Sync Time:</span>
-            <span>{lastSyncTime.toFixed(1)}ms</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Draw Time:</span>
-            <span>{lastDrawTime.toFixed(1)}ms</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>MIP Level:</span>
-            <span>{lastMipLevel}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Search Depth:</span>
-            <span>{Math.round(lastSearchDepth).toLocaleString()}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Engine Memory:</span>
-            <span>{(memoryUsed / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Display Memory:</span>
-            <span>{(displayMemory / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Buffer Memory (Allocated):</span>
-            <span>{(spiralPieces.allocatedBytes / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-            <span>Active/Freed Tiles:</span>
-            <span>{activeTiles} / {freedTiles}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
-            <span>Work Time:</span>
-            <span>{(() => {
-              const seconds = Math.floor(totalTime / 1000);
-              const h = Math.floor(seconds / 3600);
-              const m = Math.floor((seconds % 3600) / 60);
-              const s = seconds % 60;
-              return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-            })()}</span>
-          </div>
+          {isMetricsOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Batch Time:</span>
+                <span>{lastDuration.toFixed(1)}ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Sync Time:</span>
+                <span>{lastSyncTime.toFixed(1)}ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Draw Time:</span>
+                <span>{lastDrawTime.toFixed(1)}ms</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>MIP Level:</span>
+                <span>{lastMipLevel}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Search Depth:</span>
+                <span>{Math.round(lastSearchDepth).toLocaleString()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Engine Memory:</span>
+                <span>{(memoryUsed / 1024 / 1024).toFixed(1)} MB</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Display Memory:</span>
+                <span>{(displayMemory / 1024 / 1024).toFixed(1)} MB</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Buffer Memory (Allocated):</span>
+                <span>{(spiralPieces.allocatedBytes / 1024 / 1024).toFixed(1)} MB</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Active/Freed Tiles:</span>
+                <span>{activeTiles} / {freedTiles}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
+                <span>Work Time:</span>
+                <span>{(() => {
+                  const seconds = Math.floor(totalTime / 1000);
+                  const h = Math.floor(seconds / 3600);
+                  const m = Math.floor((seconds % 3600) / 60);
+                  const s = seconds % 60;
+                  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                })()}</span>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 

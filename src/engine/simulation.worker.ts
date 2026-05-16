@@ -3,7 +3,7 @@ import { SimulationEngine } from './simulation';
 let engine: SimulationEngine | null = null;
 let running = false;
 let currentBatchLimit = 10000;
-let currentMipLevel = 0;
+
 const MAX_BATCH_SIZE = 1_000_000;
 
 // Double-buffering: we alternate between two buffers to avoid allocations
@@ -19,7 +19,7 @@ function runLoop() {
   let totalSearchDepth = 0;
   let completed = false;
 
-  const batchTimeLimit = 16 << currentMipLevel; // 16ms at MIP 0
+  // const batchTimeLimit = 16 << currentMipLevel; // 16ms at MIP 0
 
   // Run for up to batchTimeLimit or until limit/buffer is reached
   const limit = Math.min(MAX_BATCH_SIZE, currentBatchLimit);
@@ -40,11 +40,11 @@ function runLoop() {
     }
 
     // Check time more frequently (every 1000 steps for large batches)
-    if (actualCount % 1000 === 0) {
-      if (performance.now() - loopStartTime > batchTimeLimit) {
-        break;
-      }
-    }
+    // if (actualCount % 1000 === 0) {
+    //   if (performance.now() - loopStartTime > batchTimeLimit) {
+    //     break;
+    //   }
+    // }
   }
 
   if (actualCount > 0) {
@@ -56,7 +56,7 @@ function runLoop() {
     // Swap to the other buffer for the next round
     currentBuffer = (currentBuffer === bufferA) ? bufferB : bufferA;
 
-    self.postMessage({
+    (self as any).postMessage({
       type: 'RESULTS',
       payload: {
         results: transferredBuffer.buffer,
@@ -98,7 +98,7 @@ self.onmessage = (e) => {
       runLoop();
     }
   } else if (type === 'MIP_LEVEL_UPDATE') {
-    currentMipLevel = payload.mipLevel;
+    // MIP level tracked if needed
   } else if (type === 'STOP') {
     running = false;
   } else if (type === 'STEP') {
