@@ -1,7 +1,7 @@
 import { numberToCoord } from './spiral';
 import { getAttackOffsets } from './pieces';
 
-export const MAX_N = 1_050_000_000;
+export const MAX_N = 1_360_000_000;
 const CHUNK_SIZE = 10_000_000;
 
 class ChunkedPieceBuffer {

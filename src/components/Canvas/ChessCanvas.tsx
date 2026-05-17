@@ -7,11 +7,8 @@ import { numberToCoord, coordToNumber } from '../../engine/spiral';
 const TILE_SIZE = 512;
 const MIP_LEVELS = [
   { scale: 1.0 },
-  { scale: 0.5 },
   { scale: 0.25 },
-  { scale: 0.125 },
   { scale: 0.0625 },
-  { scale: 0.03125 },
   { scale: 0.015625 }
 ];
 
@@ -37,8 +34,13 @@ export const ChessCanvas: React.FC = () => {
     setDrawTime,
     setDisplayMemory,
     setMipLevel,
+    setTilesMap,
     worker
   } = useStore();
+
+  useEffect(() => {
+    setTilesMap(tilesRef.current);
+  }, [setTilesMap]);
 
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(20);
@@ -312,10 +314,11 @@ export const ChessCanvas: React.FC = () => {
   // Reset tiles on restart
   useEffect(() => {
     if (historyCount === 0) {
-      tilesRef.current.clear();
-      canvasCacheRef.current.clear();
-      dirtyTilesRef.current.clear();
-      visibleTilesRef.current.clear();
+      tilesRef.current = new Map();
+      setTilesMap(tilesRef.current);
+      canvasCacheRef.current = new Map();
+      dirtyTilesRef.current = new Set();
+      visibleTilesRef.current = new Set();
       reconstructionQueueRef.current = [];
       isReconstructingRef.current = false;
       displayMemoryRef.current = 0;
@@ -323,7 +326,7 @@ export const ChessCanvas: React.FC = () => {
       lastProcessedN.current = -1;
       draw();
     }
-  }, [historyCount]);
+  }, [historyCount, setTilesMap]);
 
   const hexToRgb = (hex: string): [number, number, number] => {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -402,10 +405,10 @@ export const ChessCanvas: React.FC = () => {
       ctx.stroke();
     }
 
-    // Select MIP level
+    // Select MIP level - keep higher res level longer by transitioning at 0.5x scale
     let mipLevel = 0;
     for (let i = 0; i < MIP_LEVELS.length; i++) {
-      if (currentScale >= MIP_LEVELS[i].scale) {
+      if (currentScale >= MIP_LEVELS[i].scale * 0.5) {
         mipLevel = i;
         break;
       }
@@ -414,10 +417,7 @@ export const ChessCanvas: React.FC = () => {
     setMipLevel(mipLevel);
 
     const level = MIP_LEVELS[mipLevel];
-    const viewScale = currentScale / level.scale;
-    
-    ctx.imageSmoothingEnabled = viewScale < 0.95;
-    ctx.imageSmoothingQuality = 'low';
+    ctx.imageSmoothingEnabled = false;
 
     const worldLeft = -centerX / currentScale;
     const worldRight = (width - centerX) / currentScale;
@@ -685,7 +685,24 @@ export const ChessCanvas: React.FC = () => {
           boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
         }}>
           <div style={{ fontWeight: 'bold', marginBottom: '4px', color: players.find(p => p.id === hoveredPiece.playerId)?.color }}>
-            {PIECE_LIBRARY.KNIGHT.name} #{hoveredPiece.n.toLocaleString()}
+            {(() => {
+              const player = players.find(p => p.id === hoveredPiece.playerId);
+              if (!player) return `Piece #${hoveredPiece.n.toLocaleString()}`;
+              const { a, b } = player.pieceType;
+              const absA = Math.max(Math.abs(a), Math.abs(b));
+              const absB = Math.min(Math.abs(a), Math.abs(b));
+              let pieceName = `Leaper (${absA},${absB})`;
+              for (const key in PIECE_LIBRARY) {
+                const def = PIECE_LIBRARY[key];
+                const defA = Math.max(Math.abs(def.leap.a), Math.abs(def.leap.b));
+                const defB = Math.min(Math.abs(def.leap.a), Math.abs(def.leap.b));
+                if (defA === absA && defB === absB) {
+                  pieceName = def.name;
+                  break;
+                }
+              }
+              return `${pieceName} #${hoveredPiece.n.toLocaleString()}`;
+            })()}
           </div>
           <div>Coord: ({hoveredPiece.x}, {hoveredPiece.y})</div>
           <div>Player: {hoveredPiece.playerId}</div>

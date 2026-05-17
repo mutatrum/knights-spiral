@@ -36,6 +36,7 @@ export interface EngineStore {
   voidColor: string;
   playfieldColor: string;
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  tilesMap: Map<string, any>;
 
   // Actions
   initEngine: () => void;
@@ -49,6 +50,7 @@ export interface EngineStore {
   setDrawTime: (time: number) => void;
   setDisplayMemory: (mem: number) => void; // Added
   setMipLevel: (level: number) => void;
+  setTilesMap: (map: Map<string, any>) => void;
 
   addPlayer: (player: Omit<Player, 'id'>) => void;
   removePlayer: (id: number) => void;
@@ -93,6 +95,7 @@ export const useStore = create<EngineStore>()(
     voidColor: '#0a0a0c',
     playfieldColor: '#d6d6d6',
     bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 },
+    tilesMap: new Map(),
 
     initEngine: () => {
       const { players, worker: oldWorker } = get();
@@ -207,6 +210,7 @@ export const useStore = create<EngineStore>()(
       }
       set({ lastMipLevel: level });
     },
+    setTilesMap: (map) => set({ tilesMap: map }),
 
     step: (count = 1) => {
       const { worker } = get();
@@ -216,21 +220,7 @@ export const useStore = create<EngineStore>()(
     },
 
     reset: () => {
-      const { worker } = get();
-      if (worker) {
-        worker.postMessage({ type: 'RESET' });
-      }
-      set({
-        isPlaying: false,
-        historyCount: 0,
-        maxNProcessed: 0,
-        lowestUnoccupiedN: 0,
-        lastBatchResults: null,
-        memoryUsed: 0,
-        activeTiles: 0,
-        freedTiles: 0,
-        totalTime: 0
-      });
+      get().initEngine();
     },
 
     addPlayer: (player) => {
