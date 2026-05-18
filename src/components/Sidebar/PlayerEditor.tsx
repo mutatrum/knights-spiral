@@ -149,18 +149,18 @@ export const PlayerEditor: React.FC = React.memo(() => {
           <button 
             className="secondary" 
             onClick={handleAdd} 
-            disabled={players.length >= 16}
+            disabled={players.length >= 15}
             style={{ 
               display: 'flex', 
               alignItems: 'center', 
               justifyContent: 'center', 
               gap: '0.5rem', 
               fontSize: '0.875rem',
-              opacity: players.length >= 16 ? 0.5 : 1,
-              cursor: players.length >= 16 ? 'not-allowed' : 'pointer'
+              opacity: players.length >= 15 ? 0.5 : 1,
+              cursor: players.length >= 15 ? 'not-allowed' : 'pointer'
             }}
           >
-            <Plus size={16} /> {players.length >= 16 ? 'Player Limit Reached' : 'Add Player'}
+            <Plus size={16} /> {players.length >= 15 ? 'Player Limit Reached' : 'Add Player'}
           </button>
         </div>
       )}

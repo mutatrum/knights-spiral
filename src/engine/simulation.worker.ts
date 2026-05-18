@@ -6,22 +6,35 @@ let currentBatchLimit = 10000;
 
 const MAX_BATCH_SIZE = 1_000_000;
 
-// Double-buffering: we alternate between two buffers to avoid allocations
-let bufferA = new Int32Array(MAX_BATCH_SIZE * 5);
-let bufferB = new Int32Array(MAX_BATCH_SIZE * 5);
-let currentBuffer = bufferA;
+// Quad-buffering: maintains a pool of 4 buffers for zero-stall asynchronous parallelism
+let bufferPool: Int32Array[] = [
+  new Int32Array(MAX_BATCH_SIZE * 5),
+  new Int32Array(MAX_BATCH_SIZE * 5),
+  new Int32Array(MAX_BATCH_SIZE * 5),
+  new Int32Array(MAX_BATCH_SIZE * 5)
+];
+let isWorking = false;
+
+// Zero-latency message loop scheduler (React Fiber style)
+const scheduler = new MessageChannel();
+scheduler.port1.onmessage = () => {
+  if (running && !isWorking && bufferPool.length > 0) {
+    runLoop();
+  }
+};
+const scheduleNext = () => scheduler.port2.postMessage(null);
 
 function runLoop() {
-  if (!running || !engine) return;
+  if (!running || !engine || isWorking || bufferPool.length === 0) return;
+  isWorking = true;
 
   const loopStartTime = performance.now();
   let actualCount = 0;
   let totalSearchDepth = 0;
   let completed = false;
 
-  // const batchTimeLimit = 16 << currentMipLevel; // 16ms at MIP 0
+  const currentBuffer = bufferPool.pop()!;
 
-  // Run for up to batchTimeLimit or until limit/buffer is reached
   const limit = Math.min(MAX_BATCH_SIZE, currentBatchLimit);
   while (actualCount < limit) {
     const result = engine.step();
@@ -38,23 +51,13 @@ function runLoop() {
       running = false;
       break;
     }
-
-    // Check time more frequently (every 1000 steps for large batches)
-    // if (actualCount % 1000 === 0) {
-    //   if (performance.now() - loopStartTime > batchTimeLimit) {
-    //     break;
-    //   }
-    // }
   }
 
   if (actualCount > 0) {
     const state = engine.getState();
     const duration = performance.now() - loopStartTime;
 
-    // Transfer the current buffer to the main thread
     const transferredBuffer = currentBuffer;
-    // Swap to the other buffer for the next round
-    currentBuffer = (currentBuffer === bufferA) ? bufferB : bufferA;
 
     (self as any).postMessage({
       type: 'RESULTS',
@@ -72,6 +75,15 @@ function runLoop() {
         avgSearchDepth: actualCount > 0 ? totalSearchDepth / actualCount : 0
       }
     }, [transferredBuffer.buffer]);
+  } else {
+    // If nothing processed, return buffer to pool
+    bufferPool.push(currentBuffer);
+  }
+
+  isWorking = false;
+
+  if (running && bufferPool.length > 0) {
+    scheduleNext();
   }
 }
 
@@ -85,17 +97,14 @@ self.onmessage = (e) => {
     currentBatchLimit = payload.batchSize || currentBatchLimit;
     if (!running) {
       running = true;
-      runLoop();
+      scheduleNext();
     }
   } else if (type === 'ACK') {
-    // Main thread returns the buffer it's done with
     if (payload && payload.buffer) {
-      const returnedBuffer = new Int32Array(payload.buffer);
-      if (currentBuffer === bufferA) bufferB = returnedBuffer;
-      else bufferA = returnedBuffer;
+      bufferPool.push(new Int32Array(payload.buffer));
     }
-    if (running) {
-      runLoop();
+    if (running && !isWorking) {
+      scheduleNext();
     }
   } else if (type === 'MIP_LEVEL_UPDATE') {
     // MIP level tracked if needed

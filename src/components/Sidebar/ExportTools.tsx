@@ -4,6 +4,41 @@ import { spiralPieces } from '../../engine/simulation';
 import { numberToCoord } from '../../engine/spiral';
 import { FileJson, Image as ImageIcon } from 'lucide-react';
 
+const crcTable = new Uint32Array(256);
+for (let n = 0; n < 256; n++) {
+  let c = n;
+  for (let k = 0; k < 8; k++) {
+    if (c & 1) c = 0xEDB88320 ^ (c >>> 1);
+    else c = c >>> 1;
+  }
+  crcTable[n] = c;
+}
+
+function crc32(type: string, data: Uint8Array): number {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < 4; i++) {
+    crc = crcTable[(crc ^ type.charCodeAt(i)) & 0xFF] ^ (crc >>> 8);
+  }
+  for (let i = 0; i < data.length; i++) {
+    crc = crcTable[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function createPngChunk(type: string, data: Uint8Array): Uint8Array {
+  const len = data.length;
+  const buf = new Uint8Array(8 + len + 4);
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(0, len, false);
+  for (let i = 0; i < 4; i++) {
+    buf[4 + i] = type.charCodeAt(i);
+  }
+  buf.set(data, 8);
+  const crc = crc32(type, data);
+  dv.setUint32(8 + len, crc, false);
+  return buf;
+}
+
 export const ExportTools: React.FC = React.memo(() => {
   const { players, historyCount, bounds, playfieldColor, tilesMap } = useStore();
   const [isExporting, setIsExporting] = React.useState(false);
@@ -68,104 +103,135 @@ export const ExportTools: React.FC = React.memo(() => {
       const width = Math.max(512, maxX - minX + 1);
       const height = Math.max(512, maxY - minY + 1);
 
-      const fileName = `spiral-full-mip0-${historyCount}.bmp`;
+      const fileName = `spiral-full-mip0-${historyCount}.png`;
 
-      if ('showSaveFilePicker' in window) {
+      if ('showSaveFilePicker' in window && 'CompressionStream' in window) {
         try {
           const handle = await (window as any).showSaveFilePicker({
             suggestedName: fileName,
             types: [{
-              description: 'Bitmap Image',
-              accept: { 'image/bmp': ['.bmp'] },
+              description: 'PNG Image',
+              accept: { 'image/png': ['.png'] },
             }],
           });
           const writable = await handle.createWritable();
 
-          // BMP 24-bit uncompressed header
-          const rowStride = (width * 3 + 3) & (~3);
-          const pixelDataSize = rowStride * height;
-          const fileSize = 54 + pixelDataSize;
-
-          const header = new Uint8Array(54);
-          const dv = new DataView(header.buffer);
-          header[0] = 0x42; header[1] = 0x4D; // 'BM'
-          dv.setUint32(2, fileSize, true);
-          dv.setUint32(10, 54, true);
-          dv.setUint32(14, 40, true);
-          dv.setInt32(18, width, true);
-          dv.setInt32(22, -height, true); // Top-down raster
-          dv.setUint16(26, 1, true);
-          dv.setUint16(28, 24, true); // 24 bpp BGR
-          dv.setUint32(34, pixelDataSize, true);
-
-          await writable.write(header);
-
-          // Pre-calculate palette RGB (stored as B, G, R for BMP)
-          const palette = new Map<number, [number, number, number]>();
-          players.forEach(p => {
-            const hex = p.color;
-            const r = parseInt(hex.slice(1, 3), 16) || 255;
-            const g = parseInt(hex.slice(3, 5), 16) || 255;
-            const b = parseInt(hex.slice(5, 7), 16) || 255;
-            palette.set(p.id, [b, g, r]);
-          });
+          const ihdrData = new Uint8Array(13);
+          const ihdrDv = new DataView(ihdrData.buffer);
+          ihdrDv.setUint32(0, width, false);
+          ihdrDv.setUint32(4, height, false);
+          ihdrData[8] = 4; // Bit depth: 4
+          ihdrData[9] = 3; // Color type: 3 (Indexed RGB)
+          ihdrData[10] = 0; // Compression: Deflate
+          ihdrData[11] = 0; // Filter: Adaptive (0 = None)
+          ihdrData[12] = 0; // Interlace: None
+          const ihdrChunk = createPngChunk('IHDR', ihdrData);
 
           const bgHex = playfieldColor || '#1e1e1e';
           const bgR = parseInt(bgHex.slice(1, 3), 16) || 30;
           const bgG = parseInt(bgHex.slice(3, 5), 16) || 30;
           const bgB = parseInt(bgHex.slice(5, 7), 16) || 30;
 
+          const playerMap = new Map<number, number>();
+          const plteData = new Uint8Array(48); // 16 entries * 3 bytes
+          plteData[0] = bgR; plteData[1] = bgG; plteData[2] = bgB;
+
+          let colorIndex = 1;
+          players.forEach(p => {
+            if (colorIndex < 16) {
+              playerMap.set(p.id, colorIndex);
+              const hex = p.color;
+              const r = parseInt(hex.slice(1, 3), 16) || 255;
+              const g = parseInt(hex.slice(3, 5), 16) || 255;
+              const b = parseInt(hex.slice(5, 7), 16) || 255;
+              const base = colorIndex * 3;
+              plteData[base] = r;
+              plteData[base+1] = g;
+              plteData[base+2] = b;
+              colorIndex++;
+            }
+          });
+          const plteChunk = createPngChunk('PLTE', plteData);
+
+          const rowStride = 1 + Math.floor((width + 1) / 2);
           const rowBuffer = new Uint8Array(rowStride);
+
           const minTx = Math.floor(minX / 512);
           const maxTx = Math.floor(maxX / 512);
+          let currentY = 0;
 
-          // Stream row by row directly from in-memory MIP 0 tiles
-          for (let y = 0; y < height; y++) {
-            if (y % 1000 === 0) {
-              setExportProgress(`${Math.round((y / height) * 100)}%`);
-            }
+          const scanlineStream = new ReadableStream({
+            async pull(controller) {
+              if (currentY >= height) {
+                controller.close();
+                return;
+              }
+              if (currentY % 1000 === 0) {
+                setExportProgress(`${Math.round((currentY / height) * 100)}%`);
+                await new Promise(r => setTimeout(r, 0));
+              }
 
-            // Fill background for row
-            for (let x = 0; x < width; x++) {
-              const idx = x * 3;
-              rowBuffer[idx] = bgB;
-              rowBuffer[idx+1] = bgG;
-              rowBuffer[idx+2] = bgR;
-            }
+              rowBuffer.fill(0); // Index 0 is background, Filter byte 0 is None
 
-            const worldY = maxY - y;
-            const ty = Math.floor(-worldY / 512);
-            const ly = Math.floor(((-worldY % 512) + 512) % 512);
+              const worldY = maxY - currentY;
+              const ty = Math.floor(-worldY / 512);
+              const ly = Math.floor(((-worldY % 512) + 512) % 512);
 
-            for (let tx = minTx; tx <= maxTx; tx++) {
-              const tileKey = `0:${tx}:${ty}`;
-              const tile = tilesMap ? tilesMap.get(tileKey) : null;
-              if (tile) {
-                const tileStartX = tx * 512;
-                const startX = Math.max(minX, tileStartX);
-                const endX = Math.min(maxX, tileStartX + 511);
-                const startCol = startX - minX;
-                const count = endX - startX + 1;
-                const baseLx = startX - tileStartX;
-                const tileOffset = ly * 512;
+              for (let tx = minTx; tx <= maxTx; tx++) {
+                const tileKey = `0:${tx}:${ty}`;
+                const tile = tilesMap ? tilesMap.get(tileKey) : null;
+                if (tile) {
+                  const tileStartX = tx * 512;
+                  const startX = Math.max(minX, tileStartX);
+                  const endX = Math.min(maxX, tileStartX + 511);
+                  const startCol = startX - minX;
+                  const count = endX - startX + 1;
+                  const baseLx = startX - tileStartX;
+                  const tileOffset = ly * 512;
 
-                for (let k = 0; k < count; k++) {
-                  const pId = tile[tileOffset + baseLx + k];
-                  if (pId !== 0) {
-                    const bgr = palette.get(pId);
-                    if (bgr) {
-                      const idx = (startCol + k) * 3;
-                      rowBuffer[idx] = bgr[0];
-                      rowBuffer[idx+1] = bgr[1];
-                      rowBuffer[idx+2] = bgr[2];
+                  for (let k = 0; k < count; k++) {
+                    const rawId = tile[tileOffset + baseLx + k];
+                    if (rawId !== 0) {
+                      const pIdx = playerMap.get(rawId);
+                      if (pIdx !== undefined) {
+                        const col = startCol + k;
+                        const byteIdx = 1 + (col >> 1);
+                        if ((col & 1) === 0) {
+                          rowBuffer[byteIdx] = (rowBuffer[byteIdx] & 0x0F) | (pIdx << 4);
+                        } else {
+                          rowBuffer[byteIdx] = (rowBuffer[byteIdx] & 0xF0) | pIdx;
+                        }
+                      }
                     }
                   }
                 }
               }
+
+              controller.enqueue(new Uint8Array(rowBuffer));
+              currentY++;
             }
-            await writable.write(rowBuffer);
+          });
+
+          const compressedStream = scanlineStream.pipeThrough(new (window as any).CompressionStream('deflate')) as ReadableStream<Uint8Array>;
+          const reader = compressedStream.getReader();
+
+          await writable.write(new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+          await writable.write(ihdrChunk);
+          await writable.write(plteChunk);
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value && value.length > 0) {
+              const idatChunk = createPngChunk('IDAT', value);
+              await writable.write(idatChunk);
+            }
           }
+
+          const iendChunk = createPngChunk('IEND', new Uint8Array(0));
+          await writable.write(iendChunk);
           await writable.close();
+
           setIsExporting(false);
           setExportProgress(null);
           return;

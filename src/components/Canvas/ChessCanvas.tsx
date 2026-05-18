@@ -12,12 +12,31 @@ const MIP_LEVELS = [
   { scale: 0.015625 }
 ];
 
+const MIP_ALPHA_LUTS = new Map<number, Uint8Array>();
+const getAlphaLUT = (mip: number, maxSamples: number): Uint8Array => {
+  let lut = MIP_ALPHA_LUTS.get(mip);
+  if (!lut) {
+    lut = new Uint8Array(maxSamples + 1);
+    for (let count = 0; count <= maxSamples; count++) {
+      lut[count] = Math.min(255, Math.round((count / maxSamples) * 255));
+    }
+    MIP_ALPHA_LUTS.set(mip, lut);
+  }
+  return lut;
+};
+
 export const ChessCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scratchImageDataRef = useRef<ImageData | null>(null);
   
   const tilesRef = useRef<Map<string, any>>(new Map());
+  const tileCacheRef = useRef<any>([
+    { tx: -999999, ty: -999999, key: '', tile: null },
+    { tx: -999999, ty: -999999, key: '', tile: null },
+    { tx: -999999, ty: -999999, key: '', tile: null },
+    { tx: -999999, ty: -999999, key: '', tile: null }
+  ]);
   const canvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const dirtyTilesRef = useRef<Set<string>>(new Set());
   const visibleTilesRef = useRef<Set<string>>(new Set());
@@ -54,6 +73,7 @@ export const ChessCanvas: React.FC = () => {
   const maxNProcessedRef = useRef(maxNProcessed);
   maxNProcessedRef.current = maxNProcessed;
   const drawRef = useRef<(() => void) | null>(null);
+  const renderPendingRef = useRef<boolean>(false);
   const timerRef = useRef<any>(null);
   const displayMemoryRef = useRef<number>(0);
 
@@ -248,6 +268,7 @@ export const ChessCanvas: React.FC = () => {
     const playerMap = new Map<number, any>();
     players.forEach(p => playerMap.set(p.id, p));
 
+    const cache = tileCacheRef.current;
     for (let i = 0; i < count; i++) {
       const n = lastBatchResults[i * 5];
       const x = lastBatchResults[i * 5 + 1];
@@ -256,47 +277,111 @@ export const ChessCanvas: React.FC = () => {
 
       if (playerId === 0) continue;
       spiralPieces.set(n, playerId);
+      const rgb = paletteRef.current.get(playerId) || [255, 255, 255];
 
-      // Always update MIP 0 (highest detail)
-      const level0 = MIP_LEVELS[0];
-      const tx0 = Math.floor((x * level0.scale) / TILE_SIZE);
-      const ty0 = Math.floor((-y * level0.scale) / TILE_SIZE);
-      const tile0 = getTile(0, tx0, ty0, true);
-      const lx0 = Math.floor(((x * level0.scale) % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
-      const ly0 = Math.floor(((-y * level0.scale) % TILE_SIZE + TILE_SIZE) % TILE_SIZE);
-      tile0[ly0 * TILE_SIZE + lx0] = playerId;
-      dirtyTilesRef.current.add(`0:${tx0}:${ty0}`);
-
-      // For higher MIP levels, perform fast running color average in TypedArray memory
-      for (let m = 1; m < MIP_LEVELS.length; m++) {
-        const level = MIP_LEVELS[m];
-        const px = x * level.scale;
-        const py = -y * level.scale;
-        const tx = Math.floor(px / TILE_SIZE);
-        const ty = Math.floor(py / TILE_SIZE);
-        const lx = Math.floor(((px % TILE_SIZE) + TILE_SIZE) % TILE_SIZE);
-        const ly = Math.floor(((py % TILE_SIZE) + TILE_SIZE) % TILE_SIZE);
-        
-        const tileKey = `${m}:${tx}:${ty}`;
-        const tile = getTile(m, tx, ty, true);
-        
-        const idx4 = (ly * TILE_SIZE + lx) * 4;
-        const rgb = paletteRef.current.get(playerId) || [255, 255, 255];
-        const count = tile[idx4 + 3];
-        if (count === 0) {
-          tile[idx4] = rgb[0];
-          tile[idx4 + 1] = rgb[1];
-          tile[idx4 + 2] = rgb[2];
-          tile[idx4 + 3] = 1;
-        } else {
-          const newCount = count + 1;
-          tile[idx4] = Math.round((tile[idx4] * count + rgb[0]) / newCount);
-          tile[idx4 + 1] = Math.round((tile[idx4 + 1] * count + rgb[1]) / newCount);
-          tile[idx4 + 2] = Math.round((tile[idx4 + 2] * count + rgb[2]) / newCount);
-          tile[idx4 + 3] = newCount;
-        }
-        dirtyTilesRef.current.add(tileKey);
+      // Always update MIP 0 (shift 9, mask 511)
+      const tx0 = x >> 9;
+      const ty0 = (-y) >> 9;
+      let c0 = cache[0];
+      if (c0.tx !== tx0 || c0.ty !== ty0 || !c0.tile) {
+        c0.tx = tx0;
+        c0.ty = ty0;
+        c0.key = `0:${tx0}:${ty0}`;
+        c0.tile = getTile(0, tx0, ty0, true);
+        dirtyTilesRef.current.add(c0.key);
       }
+      const lx0 = x & 511;
+      const ly0 = (-y) & 511;
+      c0.tile[(ly0 << 9) | lx0] = playerId;
+
+      // MIP 1 (shift 11, mask 2047, local shift 2)
+      const tx1 = x >> 11;
+      const ty1 = (-y) >> 11;
+      let c1 = cache[1];
+      if (c1.tx !== tx1 || c1.ty !== ty1 || !c1.tile) {
+        c1.tx = tx1;
+        c1.ty = ty1;
+        c1.key = `1:${tx1}:${ty1}`;
+        c1.tile = getTile(1, tx1, ty1, true);
+        dirtyTilesRef.current.add(c1.key);
+      }
+      const lx1 = (x & 2047) >> 2;
+      const ly1 = ((-y) & 2047) >> 2;
+      const idx1 = ((ly1 << 9) | lx1) << 2;
+      const count1 = c1.tile[idx1 + 3];
+      if (count1 === 0) {
+        c1.tile[idx1] = rgb[0];
+        c1.tile[idx1 + 1] = rgb[1];
+        c1.tile[idx1 + 2] = rgb[2];
+        c1.tile[idx1 + 3] = 1;
+      } else {
+        const newCount = count1 + 1;
+        c1.tile[idx1] = Math.round((c1.tile[idx1] * count1 + rgb[0]) / newCount);
+        c1.tile[idx1 + 1] = Math.round((c1.tile[idx1 + 1] * count1 + rgb[1]) / newCount);
+        c1.tile[idx1 + 2] = Math.round((c1.tile[idx1 + 2] * count1 + rgb[2]) / newCount);
+        c1.tile[idx1 + 3] = newCount;
+      }
+
+      // MIP 2 (shift 13, mask 8191, local shift 4)
+      const tx2 = x >> 13;
+      const ty2 = (-y) >> 13;
+      let c2 = cache[2];
+      if (c2.tx !== tx2 || c2.ty !== ty2 || !c2.tile) {
+        c2.tx = tx2;
+        c2.ty = ty2;
+        c2.key = `2:${tx2}:${ty2}`;
+        c2.tile = getTile(2, tx2, ty2, true);
+        dirtyTilesRef.current.add(c2.key);
+      }
+      const lx2 = (x & 8191) >> 4;
+      const ly2 = ((-y) & 8191) >> 4;
+      const idx2 = ((ly2 << 9) | lx2) << 2;
+      const count2 = c2.tile[idx2 + 3];
+      if (count2 === 0) {
+        c2.tile[idx2] = rgb[0];
+        c2.tile[idx2 + 1] = rgb[1];
+        c2.tile[idx2 + 2] = rgb[2];
+        c2.tile[idx2 + 3] = 1;
+      } else {
+        const newCount = count2 + 1;
+        c2.tile[idx2] = Math.round((c2.tile[idx2] * count2 + rgb[0]) / newCount);
+        c2.tile[idx2 + 1] = Math.round((c2.tile[idx2 + 1] * count2 + rgb[1]) / newCount);
+        c2.tile[idx2 + 2] = Math.round((c2.tile[idx2 + 2] * count2 + rgb[2]) / newCount);
+        c2.tile[idx2 + 3] = newCount;
+      }
+
+      // MIP 3 (shift 15, mask 32767, local shift 6)
+      const tx3 = x >> 15;
+      const ty3 = (-y) >> 15;
+      let c3 = cache[3];
+      if (c3.tx !== tx3 || c3.ty !== ty3 || !c3.tile) {
+        c3.tx = tx3;
+        c3.ty = ty3;
+        c3.key = `3:${tx3}:${ty3}`;
+        c3.tile = getTile(3, tx3, ty3, true);
+        dirtyTilesRef.current.add(c3.key);
+      }
+      const lx3 = (x & 32767) >> 6;
+      const ly3 = ((-y) & 32767) >> 6;
+      const idx3 = ((ly3 << 9) | lx3) << 2;
+      const count3 = c3.tile[idx3 + 3];
+      if (count3 === 0) {
+        c3.tile[idx3] = rgb[0];
+        c3.tile[idx3 + 1] = rgb[1];
+        c3.tile[idx3 + 2] = rgb[2];
+        c3.tile[idx3 + 3] = 1;
+      } else {
+        const newCount = count3 + 1;
+        c3.tile[idx3] = Math.round((c3.tile[idx3] * count3 + rgb[0]) / newCount);
+        c3.tile[idx3 + 1] = Math.round((c3.tile[idx3 + 1] * count3 + rgb[1]) / newCount);
+        c3.tile[idx3 + 2] = Math.round((c3.tile[idx3 + 2] * count3 + rgb[2]) / newCount);
+        c3.tile[idx3 + 3] = newCount;
+      }
+
+      dirtyTilesRef.current.add(c0.key);
+      dirtyTilesRef.current.add(c1.key);
+      dirtyTilesRef.current.add(c2.key);
+      dirtyTilesRef.current.add(c3.key);
     }
 
     // Instantly return the transferable buffer to the worker so it never stalls
@@ -306,7 +391,13 @@ export const ChessCanvas: React.FC = () => {
     }
 
     lastProcessedN.current = maxNProcessed;
-    draw();
+    if (!renderPendingRef.current) {
+      renderPendingRef.current = true;
+      requestAnimationFrame(() => {
+        renderPendingRef.current = false;
+        if (drawRef.current) drawRef.current();
+      });
+    }
 
 
   }, [historyCount, lastBatchResults, players, worker]);
@@ -315,6 +406,12 @@ export const ChessCanvas: React.FC = () => {
   useEffect(() => {
     if (historyCount === 0) {
       tilesRef.current = new Map();
+      tileCacheRef.current = [
+        { tx: -999999, ty: -999999, key: '', tile: null },
+        { tx: -999999, ty: -999999, key: '', tile: null },
+        { tx: -999999, ty: -999999, key: '', tile: null },
+        { tx: -999999, ty: -999999, key: '', tile: null }
+      ];
       setTilesMap(tilesRef.current);
       canvasCacheRef.current = new Map();
       dirtyTilesRef.current = new Set();
@@ -342,7 +439,6 @@ export const ChessCanvas: React.FC = () => {
     if (!ctx) return;
 
     const startTime = performance.now();
-    drawRef.current = draw;
     const pixelRatio = window.devicePixelRatio || 1;
     const width = canvas.clientWidth * pixelRatio;
     const height = canvas.clientHeight * pixelRatio;
@@ -476,6 +572,7 @@ export const ChessCanvas: React.FC = () => {
             } else {
               const side = Math.round(1 / level.scale);
               const maxSamples = side * side;
+              const lut = getAlphaLUT(mipLevel, maxSamples);
               for (let i = 0; i < TILE_SIZE * TILE_SIZE; i++) {
                 const count = tile[i * 4 + 3];
                 if (count === 0) {
@@ -484,7 +581,7 @@ export const ChessCanvas: React.FC = () => {
                   data[i * 4] = tile[i * 4];
                   data[i * 4 + 1] = tile[i * 4 + 1];
                   data[i * 4 + 2] = tile[i * 4 + 2];
-                  data[i * 4 + 3] = Math.min(255, Math.round((count / maxSamples) * 255));
+                  data[i * 4 + 3] = lut[count];
                 }
               }
             }
@@ -519,13 +616,20 @@ export const ChessCanvas: React.FC = () => {
 
     // High-quality labels
     if (currentScale > 30) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.font = `${currentScale / 3}px Inter`;
       ctx.textAlign = 'center';
       const minX = Math.floor(worldLeft);
       const maxX = Math.ceil(worldRight);
       const minY = Math.floor(worldBottom);
       const maxY = Math.ceil(worldTop);
+
+      const contrastMap = new Map<number, string>();
+      players.forEach(p => {
+        const r = parseInt(p.color.slice(1, 3), 16) || 0;
+        const g = parseInt(p.color.slice(3, 5), 16) || 0;
+        const b = parseInt(p.color.slice(5, 7), 16) || 0;
+        const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        contrastMap.set(p.id, lum > 0.5 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.95)');
+      });
 
       for (let gx = minX; gx <= maxX; gx++) {
         for (let gy = minY; gy <= maxY; gy++) {
@@ -535,7 +639,12 @@ export const ChessCanvas: React.FC = () => {
             if (playerId !== 0) {
               const px = centerX + (gx + 0.5) * currentScale;
               const py = centerY - (gy - 0.5) * currentScale;
-              ctx.fillText(n.toLocaleString(), px, py + currentScale / 8);
+              const str = n.toLocaleString();
+              const charFactor = str.length > 3 ? (str.length * 0.55) : 2;
+              const fontSize = Math.max(8, Math.min(currentScale / 3.5, (currentScale * 0.85) / charFactor));
+              ctx.font = `600 ${fontSize}px Inter, sans-serif`;
+              ctx.fillStyle = contrastMap.get(playerId) || 'rgba(255, 255, 255, 0.95)';
+              ctx.fillText(str, px, py + fontSize / 3);
             }
           }
         }
@@ -552,6 +661,8 @@ export const ChessCanvas: React.FC = () => {
 
     setDrawTime(performance.now() - startTime);
   };
+
+  drawRef.current = draw;
 
   useEffect(() => {
     draw();
@@ -705,6 +816,7 @@ export const ChessCanvas: React.FC = () => {
             })()}
           </div>
           <div>Coord: ({hoveredPiece.x}, {hoveredPiece.y})</div>
+          <div>Spiral Index: #{hoveredPiece.n.toLocaleString()}</div>
           <div>Player: {hoveredPiece.playerId}</div>
         </div>
       )}

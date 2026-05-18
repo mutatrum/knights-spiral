@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Player } from '../engine/simulation';
-import { spiralPieces } from '../engine/simulation'; // Added
+import { spiralPieces } from '../engine/simulation';
 import { PIECE_LIBRARY } from '../engine/pieces';
 import type { Preset } from '../engine/presets';
 
@@ -30,8 +30,8 @@ export interface EngineStore {
   lastMipLevel: number;
   memoryUsed: number;
   displayMemory: number;
-  activeTiles: number; // Added
-  freedTiles: number; // Added
+  activeTiles: number;
+  freedTiles: number;
   totalTime: number;
   voidColor: string;
   playfieldColor: string;
@@ -48,7 +48,7 @@ export interface EngineStore {
   setVoidColor: (color: string) => void;
   setPlayfieldColor: (color: string) => void;
   setDrawTime: (time: number) => void;
-  setDisplayMemory: (mem: number) => void; // Added
+  setDisplayMemory: (mem: number) => void;
   setMipLevel: (level: number) => void;
   setTilesMap: (map: Map<string, any>) => void;
 
@@ -87,11 +87,11 @@ export const useStore = create<EngineStore>()(
     lastDrawTime: 0,
     lastSyncTime: 0,
     lastMipLevel: 0,
-    memoryUsed: 0, // Added
+    memoryUsed: 0,
     displayMemory: 0,
-    activeTiles: 0, // Added
-    freedTiles: 0, // Added
-    totalTime: 0, // Added
+    activeTiles: 0,
+    freedTiles: 0,
+    totalTime: 0,
     voidColor: '#0a0a0c',
     playfieldColor: '#d6d6d6',
     bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 },
@@ -225,7 +225,7 @@ export const useStore = create<EngineStore>()(
 
     addPlayer: (player) => {
       const { players } = get();
-      if (players.length >= 16) return;
+      if (players.length >= 15) return;
       const nextId = players.length > 0 ? Math.max(...players.map(p => p.id)) + 1 : 1;
       const newPlayers = [...players, { ...player, id: nextId }];
       set({ players: newPlayers });

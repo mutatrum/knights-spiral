@@ -2,28 +2,29 @@ import { numberToCoord } from './spiral';
 import { getAttackOffsets } from './pieces';
 
 export const MAX_N = 1_360_000_000;
-const CHUNK_SIZE = 10_000_000;
+const CHUNK_SHIFT = 23; // 2^23 = 8,388,608 pieces per chunk
+const CHUNK_SIZE = 1 << CHUNK_SHIFT;
+const CHUNK_MASK = CHUNK_SIZE - 1;
 
 class ChunkedPieceBuffer {
   private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / CHUNK_SIZE)).fill(null);
 
   public get(n: number): number {
-    const chunkIdx = Math.floor(n / CHUNK_SIZE);
+    const chunkIdx = n >> CHUNK_SHIFT;
     const chunk = this.chunks[chunkIdx];
     if (!chunk) return 0;
-    return chunk[n % CHUNK_SIZE];
+    return chunk[n & CHUNK_MASK];
   }
 
   public set(n: number, val: number) {
-    const chunkIdx = Math.floor(n / CHUNK_SIZE);
+    const chunkIdx = n >> CHUNK_SHIFT;
     if (!this.chunks[chunkIdx]) {
       this.chunks[chunkIdx] = new Uint8Array(CHUNK_SIZE);
     }
-    this.chunks[chunkIdx]![n % CHUNK_SIZE] = val;
+    this.chunks[chunkIdx]![n & CHUNK_MASK] = val;
   }
 
   get allocatedBytes(): number {
-    // Return actual memory used
     return this.chunks.filter(c => c !== null).length * CHUNK_SIZE;
   }
 
@@ -96,11 +97,12 @@ export class SimulationEngine {
   private totalFreedTiles: number = 0;
   private lastTileKey: number = -1;
   private lastDangerTile: Uint16Array | null = null;
+  private cursor = { n: -1, x: 0, y: 0, k: 0, i: 0, t: 0 };
 
   constructor(players: Player[]) {
     this.players = players;
     this.attackOffsets = new Map();
-    this.playerBitMap = new Map(); // Added
+    this.playerBitMap = new Map();
     this.updateAttackOffsets();
     this.state = this.createInitialState();
   }
@@ -125,6 +127,48 @@ export class SimulationEngine {
       this.attackOffsets.set(p.id, getAttackOffsets(p.pieceType.a, p.pieceType.b));
       this.playerBitMap.set(p.id, 1 << i);
     });
+  }
+
+  private advanceCursorTo(targetN: number) {
+    if (this.cursor.n === targetN) return;
+
+    if (targetN === this.cursor.n + 1 && this.cursor.n > 0) {
+      this.cursor.n++;
+      this.cursor.i++;
+      if (this.cursor.i === 4 * this.cursor.t) {
+        this.cursor.k++;
+        this.cursor.t = 2 * this.cursor.k;
+        this.cursor.i = 0;
+        this.cursor.x = this.cursor.k;
+        this.cursor.y = -this.cursor.k + 1;
+      } else if (this.cursor.i < this.cursor.t) {
+        this.cursor.y++;
+      } else if (this.cursor.i < 2 * this.cursor.t) {
+        this.cursor.x--;
+      } else if (this.cursor.i < 3 * this.cursor.t) {
+        this.cursor.y--;
+      } else {
+        this.cursor.x++;
+      }
+    } else {
+      const pt = numberToCoord(targetN);
+      this.cursor.n = targetN;
+      this.cursor.x = pt.x;
+      this.cursor.y = pt.y;
+      if (targetN === 0) {
+        this.cursor.k = 0;
+        this.cursor.i = 0;
+        this.cursor.t = 0;
+      } else {
+        let s = Math.floor(Math.sqrt(targetN));
+        if ((s + 1) * (s + 1) <= targetN) s++;
+        const k = (s + 1) >> 1;
+        this.cursor.k = k;
+        this.cursor.t = 2 * k;
+        const m = (2 * k - 1) * (2 * k - 1);
+        this.cursor.i = targetN - m;
+      }
+    }
   }
 
   private getDangerValue(x: number, y: number): number {
@@ -155,17 +199,19 @@ export class SimulationEngine {
       const aty = ay >> 9;
       const aKey = (atx << 16) | (aty & 0xFFFF);
 
-      let dangerTile = this.state.dangerGrid.get(aKey);
-      if (!dangerTile) {
-        dangerTile = new Uint16Array(262144);
-        this.state.dangerGrid.set(aKey, dangerTile);
-      }
-      dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
-
-      // Update cache if we modified the active tile
-      if (aKey === this.lastTileKey) {
+      let dangerTile;
+      if (aKey === this.lastTileKey && this.lastDangerTile) {
+        dangerTile = this.lastDangerTile;
+      } else {
+        dangerTile = this.state.dangerGrid.get(aKey) || null;
+        if (!dangerTile) {
+          dangerTile = new Uint16Array(262144);
+          this.state.dangerGrid.set(aKey, dangerTile);
+        }
+        this.lastTileKey = aKey;
         this.lastDangerTile = dangerTile;
       }
+      dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
     }
   }
 
@@ -187,9 +233,12 @@ export class SimulationEngine {
     let searchDepth = 0;
 
 
+    this.advanceCursorTo(n);
+
     while (n < MAX_N) {
       if (!this.isOccupied(n)) {
-        const { x: cx, y: cy } = numberToCoord(n);
+        const cx = this.cursor.x;
+        const cy = this.cursor.y;
         const dangerValue = this.getDangerValue(cx, cy);
 
         if ((dangerValue & opponentMask) === 0) {
@@ -221,6 +270,7 @@ export class SimulationEngine {
         searchDepth++;
       }
       n++;
+      this.advanceCursorTo(n);
     }
 
     return null; // Hit MAX_N boundary
@@ -229,7 +279,7 @@ export class SimulationEngine {
   public getState() {
     const dangerMem = this.state.dangerGrid.size * 524288; // 512*512*2
     const bitsetMem = this.state.occupationBitset.allocatedBytes;
-    const bufferMem = spiralPieces.allocatedBytes;
+    const bufferMem = 80_000_000; // 4 transferable buffers in worker pool (20MB each)
 
     return {
       step: this.state.step,
@@ -272,6 +322,7 @@ export class SimulationEngine {
 
   public reset() {
     this.totalFreedTiles = 0;
+    this.cursor.n = -1;
     spiralPieces.reset();
     this.state = this.createInitialState();
   }
