@@ -68,6 +68,7 @@ function runLoop() {
         lowestUnoccupiedN: state.lowestUnoccupiedN,
         memoryUsed: state.memoryUsed,
         activeTiles: state.activeTiles,
+        pooledTiles: state.pooledTiles,
         freedTiles: state.freedTiles,
         bounds: state.bounds,
         duration: duration,

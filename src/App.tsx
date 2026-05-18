@@ -31,6 +31,7 @@ function App() {
     displayMemory,
     totalTime,
     activeTiles,
+    pooledTiles,
     freedTiles
   } = useStore();
 
@@ -90,7 +91,7 @@ function App() {
             <input
               type="range"
               min="1"
-              max="100000"
+              max="1000000"
               value={speed}
               onChange={(e) => setSpeed(parseInt(e.target.value))}
               style={{ width: '100%', accentColor: 'var(--accent)' }}
@@ -102,10 +103,10 @@ function App() {
         </div>
         <PresetGallery />
         <PlayerEditor />
-        
+
         <div className="control-group">
-          <div 
-            className="label" 
+          <div
+            className="label"
             onClick={() => setIsWorldOpen(!isWorldOpen)}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
           >
@@ -161,8 +162,8 @@ function App() {
         </div>
 
         <div className="stats" style={{ marginTop: '0.5rem', opacity: 0.8 }}>
-          <div 
-            className="label" 
+          <div
+            className="label"
             onClick={() => setIsMetricsOpen(!isMetricsOpen)}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none', marginBottom: isMetricsOpen ? '0.75rem' : 0 }}
           >
@@ -197,17 +198,35 @@ function App() {
                 <span>Engine Memory:</span>
                 <span>{(memoryUsed / 1024 / 1024).toFixed(1)} MB</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span>Display Memory:</span>
-                <span>{(displayMemory / 1024 / 1024).toFixed(1)} MB</span>
+              <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.75rem', gap: '2px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Display Memory:</span>
+                  <span>{(displayMemory.total / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
+                  <span>├─ MIP 0 (1x):</span>
+                  <span>{(displayMemory.mip0 / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
+                  <span>├─ MIP 1 (0.25x):</span>
+                  <span>{(displayMemory.mip1 / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
+                  <span>├─ MIP 2 (0.06x):</span>
+                  <span>{(displayMemory.mip2 / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
+                  <span>└─ MIP 3 (0.015x):</span>
+                  <span>{(displayMemory.mip3 / 1024 / 1024).toFixed(1)} MB</span>
+                </div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
                 <span>Buffer Memory (Allocated):</span>
                 <span>{(spiralPieces.allocatedBytes / 1024 / 1024).toFixed(1)} MB</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span>Active/Freed Tiles:</span>
-                <span>{activeTiles} / {freedTiles}</span>
+                <span>Active/Pooled/Recycled:</span>
+                <span>{activeTiles} / {pooledTiles} / {freedTiles}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
                 <span>Work Time:</span>

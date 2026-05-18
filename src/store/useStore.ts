@@ -13,6 +13,14 @@ export const resetBuffer = () => {
   spiralPieces.reset();
 };
 
+export interface DisplayMemoryMetrics {
+  mip0: number;
+  mip1: number;
+  mip2: number;
+  mip3: number;
+  total: number;
+}
+
 export interface EngineStore {
   players: Player[];
   isPlaying: boolean;
@@ -29,14 +37,15 @@ export interface EngineStore {
   lastSyncTime: number;
   lastMipLevel: number;
   memoryUsed: number;
-  displayMemory: number;
+  displayMemory: DisplayMemoryMetrics;
   activeTiles: number;
+  pooledTiles: number;
   freedTiles: number;
   totalTime: number;
   voidColor: string;
   playfieldColor: string;
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
-  tilesMap: Map<string, any>;
+  tilesMap: Map<number, any>;
 
   // Actions
   initEngine: () => void;
@@ -48,9 +57,9 @@ export interface EngineStore {
   setVoidColor: (color: string) => void;
   setPlayfieldColor: (color: string) => void;
   setDrawTime: (time: number) => void;
-  setDisplayMemory: (mem: number) => void;
+  setDisplayMemory: (mem: DisplayMemoryMetrics) => void;
   setMipLevel: (level: number) => void;
-  setTilesMap: (map: Map<string, any>) => void;
+  setTilesMap: (map: Map<number, any>) => void;
 
   addPlayer: (player: Omit<Player, 'id'>) => void;
   removePlayer: (id: number) => void;
@@ -88,8 +97,9 @@ export const useStore = create<EngineStore>()(
     lastSyncTime: 0,
     lastMipLevel: 0,
     memoryUsed: 0,
-    displayMemory: 0,
+    displayMemory: { mip0: 0, mip1: 0, mip2: 0, mip3: 0, total: 0 },
     activeTiles: 0,
+    pooledTiles: 0,
     freedTiles: 0,
     totalTime: 0,
     voidColor: '#0a0a0c',
@@ -106,7 +116,7 @@ export const useStore = create<EngineStore>()(
       newWorker.onmessage = (e) => {
         const { type, payload } = e.data;
         if (type === 'RESULTS') {
-          const { results, count, bounds, duration, completed, avgSearchDepth, lowestUnoccupiedN, memoryUsed, activeTiles, freedTiles } = payload;
+          const { results, count, bounds, duration, completed, avgSearchDepth, lowestUnoccupiedN, memoryUsed, activeTiles, pooledTiles, freedTiles } = payload;
           const pieces = new Int32Array(results);
 
           const startSync = performance.now();
@@ -140,6 +150,7 @@ export const useStore = create<EngineStore>()(
             lastBatchResults: pieces,
             memoryUsed,
             activeTiles,
+            pooledTiles,
             freedTiles,
             totalTime: get().totalTime + duration,
             lastDuration: duration,
@@ -156,8 +167,9 @@ export const useStore = create<EngineStore>()(
             lowestUnoccupiedN: 0,
             lastBatchResults: null,
             memoryUsed: 0,
-            activeTiles: 0, // Added
-            freedTiles: 0, // Added
+            activeTiles: 0,
+            pooledTiles: 0,
+            freedTiles: 0,
             totalTime: 0,
             isCompleted: false,
             bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 }

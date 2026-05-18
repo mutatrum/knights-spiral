@@ -1,31 +1,45 @@
 import { numberToCoord } from './spiral';
 import { getAttackOffsets } from './pieces';
 
-export const MAX_N = 1_360_000_000;
-const CHUNK_SHIFT = 23; // 2^23 = 8,388,608 pieces per chunk
-const CHUNK_SIZE = 1 << CHUNK_SHIFT;
-const CHUNK_MASK = CHUNK_SIZE - 1;
+export const MAX_N = 2_140_000_000;
+
+export const getTileKey = (mip: number, tx: number, ty: number): number => {
+  return (mip << 28) | ((tx & 0x3FFF) << 14) | (ty & 0x3FFF);
+};
+
+const PIECE_CHUNK_SHIFT = 23; // 2^23 = 8,388,608 squares per chunk
+const PIECE_CHUNK_SQUARES = 1 << PIECE_CHUNK_SHIFT;
+const PIECE_BYTE_SIZE = 4194304; // 4MB per chunk = 8M nibbles
+const PIECE_BYTE_MASK = PIECE_BYTE_SIZE - 1;
 
 class ChunkedPieceBuffer {
-  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / CHUNK_SIZE)).fill(null);
+  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / PIECE_CHUNK_SQUARES)).fill(null);
 
   public get(n: number): number {
-    const chunkIdx = n >> CHUNK_SHIFT;
+    const chunkIdx = n >>> PIECE_CHUNK_SHIFT;
     const chunk = this.chunks[chunkIdx];
     if (!chunk) return 0;
-    return chunk[n & CHUNK_MASK];
+    const byteIdx = (n >>> 1) & PIECE_BYTE_MASK;
+    return (n & 1) ? (chunk[byteIdx] >> 4) : (chunk[byteIdx] & 0x0F);
   }
 
-  public set(n: number, val: number) {
-    const chunkIdx = n >> CHUNK_SHIFT;
-    if (!this.chunks[chunkIdx]) {
-      this.chunks[chunkIdx] = new Uint8Array(CHUNK_SIZE);
+  public set(n: number, pId: number) {
+    const chunkIdx = n >>> PIECE_CHUNK_SHIFT;
+    let chunk = this.chunks[chunkIdx];
+    if (!chunk) {
+      chunk = new Uint8Array(PIECE_BYTE_SIZE);
+      this.chunks[chunkIdx] = chunk;
     }
-    this.chunks[chunkIdx]![n & CHUNK_MASK] = val;
+    const byteIdx = (n >>> 1) & PIECE_BYTE_MASK;
+    if (n & 1) {
+      chunk[byteIdx] = (chunk[byteIdx] & 0x0F) | ((pId & 0x0F) << 4);
+    } else {
+      chunk[byteIdx] = (chunk[byteIdx] & 0xF0) | (pId & 0x0F);
+    }
   }
 
   get allocatedBytes(): number {
-    return this.chunks.filter(c => c !== null).length * CHUNK_SIZE;
+    return this.chunks.filter(c => c !== null).length * PIECE_BYTE_SIZE;
   }
 
   public reset() {
@@ -44,27 +58,29 @@ export interface Player {
   };
 }
 
+const BITSET_CHUNK_SHIFT = 23; // 2^23 = 8,388,608 bits per chunk
+const BITSET_CHUNK_BITS = 1 << BITSET_CHUNK_SHIFT;
+const BITSET_BYTE_SIZE = 1048576; // 1MB (2^20 bytes) per chunk
+const BITSET_BYTE_MASK = BITSET_BYTE_SIZE - 1;
+
 class ChunkedBitset {
-  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / (8 * 1024 * 1024))).fill(null);
-  private CHUNK_SIZE = 1024 * 1024; // 1MB per chunk = 8M bits
+  private chunks: (Uint8Array | null)[] = new Array(Math.ceil(MAX_N / BITSET_CHUNK_BITS)).fill(null);
 
   public get(n: number): boolean {
-    const bitIdx = n;
-    const chunkIdx = Math.floor(bitIdx / (8 * this.CHUNK_SIZE));
+    const chunkIdx = n >>> BITSET_CHUNK_SHIFT;
     const chunk = this.chunks[chunkIdx];
     if (!chunk) return false;
-    const offset = bitIdx % (8 * this.CHUNK_SIZE);
-    return (chunk[offset >> 3] & (1 << (offset & 7))) !== 0;
+    return (chunk[(n >>> 3) & BITSET_BYTE_MASK] & (1 << (n & 7))) !== 0;
   }
 
   public set(n: number) {
-    const bitIdx = n;
-    const chunkIdx = Math.floor(bitIdx / (8 * this.CHUNK_SIZE));
-    if (!this.chunks[chunkIdx]) {
-      this.chunks[chunkIdx] = new Uint8Array(this.CHUNK_SIZE);
+    const chunkIdx = n >>> BITSET_CHUNK_SHIFT;
+    let chunk = this.chunks[chunkIdx];
+    if (!chunk) {
+      chunk = new Uint8Array(BITSET_BYTE_SIZE);
+      this.chunks[chunkIdx] = chunk;
     }
-    const offset = bitIdx % (8 * this.CHUNK_SIZE);
-    this.chunks[chunkIdx]![offset >> 3] |= (1 << (offset & 7));
+    chunk[(n >>> 3) & BITSET_BYTE_MASK] |= (1 << (n & 7));
   }
 
   public clear() {
@@ -72,7 +88,7 @@ class ChunkedBitset {
   }
 
   get allocatedBytes(): number {
-    return this.chunks.filter(c => c !== null).length * this.CHUNK_SIZE;
+    return this.chunks.filter(c => c !== null).length * BITSET_BYTE_SIZE;
   }
 }
 
@@ -98,6 +114,8 @@ export class SimulationEngine {
   private lastTileKey: number = -1;
   private lastDangerTile: Uint16Array | null = null;
   private cursor = { n: -1, x: 0, y: 0, k: 0, i: 0, t: 0 };
+  private stepResult = { n: 0, x: 0, y: 0, playerId: 0, searchDepth: 0 };
+  private freeTilePool: Uint16Array[] = [];
 
   constructor(players: Player[]) {
     this.players = players;
@@ -162,13 +180,21 @@ export class SimulationEngine {
       } else {
         let s = Math.floor(Math.sqrt(targetN));
         if ((s + 1) * (s + 1) <= targetN) s++;
-        const k = (s + 1) >> 1;
+        let k = (s + 1) >> 1;
+        let m = k === 0 ? 0 : Math.pow(2 * k - 1, 2);
         this.cursor.k = k;
-        this.cursor.t = 2 * k;
-        const m = (2 * k - 1) * (2 * k - 1);
         this.cursor.i = targetN - m;
+        this.cursor.t = 2 * k;
       }
     }
+  }
+
+  private isOccupied(n: number): boolean {
+    return this.state.occupationBitset.get(n);
+  }
+
+  private setOccupied(n: number) {
+    this.state.occupationBitset.set(n);
   }
 
   private getDangerValue(x: number, y: number): number {
@@ -187,7 +213,6 @@ export class SimulationEngine {
   }
 
   private recordPiece(x: number, y: number, playerId: number) {
-    // Danger Grid
     const playerBit = this.playerBitMap.get(playerId) || 0;
     const offsets = this.attackOffsets.get(playerId) || [];
 
@@ -205,7 +230,11 @@ export class SimulationEngine {
       } else {
         dangerTile = this.state.dangerGrid.get(aKey) || null;
         if (!dangerTile) {
-          dangerTile = new Uint16Array(262144);
+          if (this.freeTilePool.length > 0) {
+            dangerTile = this.freeTilePool.pop()!;
+          } else {
+            dangerTile = new Uint16Array(262144);
+          }
           this.state.dangerGrid.set(aKey, dangerTile);
         }
         this.lastTileKey = aKey;
@@ -213,14 +242,6 @@ export class SimulationEngine {
       }
       dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
     }
-  }
-
-  private isOccupied(n: number): boolean {
-    return this.state.occupationBitset.get(n);
-  }
-
-  private setOccupied(n: number) {
-    this.state.occupationBitset.set(n);
   }
 
   public step(): { n: number; x: number; y: number; playerId: number; searchDepth: number } | null {
@@ -265,7 +286,12 @@ export class SimulationEngine {
             this.pruneTiles();
           }
 
-          return { n, x: cx, y: cy, playerId: player.id, searchDepth };
+          this.stepResult.n = n;
+          this.stepResult.x = cx;
+          this.stepResult.y = cy;
+          this.stepResult.playerId = player.id;
+          this.stepResult.searchDepth = searchDepth;
+          return this.stepResult;
         }
         searchDepth++;
       }
@@ -277,7 +303,7 @@ export class SimulationEngine {
   }
 
   public getState() {
-    const dangerMem = this.state.dangerGrid.size * 524288; // 512*512*2
+    const dangerMem = (this.state.dangerGrid.size + this.freeTilePool.length) * 524288; // 512*512*2 bytes per buffer
     const bitsetMem = this.state.occupationBitset.allocatedBytes;
     const bufferMem = 80_000_000; // 4 transferable buffers in worker pool (20MB each)
 
@@ -286,6 +312,7 @@ export class SimulationEngine {
       lowestUnoccupiedN: this.state.lowestUnoccupiedN,
       memoryUsed: dangerMem + bitsetMem + bufferMem, // Total bytes
       activeTiles: this.state.dangerGrid.size,
+      pooledTiles: this.freeTilePool.length,
       freedTiles: this.totalFreedTiles,
       bounds: {
         minX: this.state.minX,
@@ -314,7 +341,19 @@ export class SimulationEngine {
       }
     }
 
-    for (const key of keysToPrune) {
+    for (let i = 0; i < keysToPrune.length; i++) {
+      const key = keysToPrune[i];
+      if (key === this.lastTileKey) {
+        this.lastTileKey = -1;
+        this.lastDangerTile = null;
+      }
+      const tile = this.state.dangerGrid.get(key);
+      if (tile) {
+        if (this.freeTilePool.length < 1000) { // Limit pool to 1000 tiles (~500MB max)
+          tile.fill(0);
+          this.freeTilePool.push(tile);
+        }
+      }
       this.state.dangerGrid.delete(key);
       this.totalFreedTiles++;
     }
@@ -323,6 +362,9 @@ export class SimulationEngine {
   public reset() {
     this.totalFreedTiles = 0;
     this.cursor.n = -1;
+    this.lastTileKey = -1;
+    this.lastDangerTile = null;
+    this.freeTilePool = [];
     spiralPieces.reset();
     this.state = this.createInitialState();
   }

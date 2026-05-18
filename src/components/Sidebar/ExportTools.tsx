@@ -1,6 +1,6 @@
 import React from 'react';
 import { useStore, maxNProcessed } from '../../store/useStore';
-import { spiralPieces } from '../../engine/simulation';
+import { spiralPieces, getTileKey } from '../../engine/simulation';
 import { numberToCoord } from '../../engine/spiral';
 import { FileJson, Image as ImageIcon } from 'lucide-react';
 
@@ -178,7 +178,7 @@ export const ExportTools: React.FC = React.memo(() => {
               const ly = Math.floor(((-worldY % 512) + 512) % 512);
 
               for (let tx = minTx; tx <= maxTx; tx++) {
-                const tileKey = `0:${tx}:${ty}`;
+                const tileKey = getTileKey(0, tx, ty);
                 const tile = tilesMap ? tilesMap.get(tileKey) : null;
                 if (tile) {
                   const tileStartX = tx * 512;

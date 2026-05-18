@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { MAX_N, spiralPieces } from '../../engine/simulation';
+import { MAX_N, spiralPieces, getTileKey } from '../../engine/simulation';
 import { PIECE_LIBRARY } from '../../engine/pieces';
 import { numberToCoord, coordToNumber } from '../../engine/spiral';
 
@@ -30,17 +30,17 @@ export const ChessCanvas: React.FC = () => {
   const scratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const scratchImageDataRef = useRef<ImageData | null>(null);
   
-  const tilesRef = useRef<Map<string, any>>(new Map());
+  const tilesRef = useRef<Map<number, any>>(new Map());
   const tileCacheRef = useRef<any>([
-    { tx: -999999, ty: -999999, key: '', tile: null },
-    { tx: -999999, ty: -999999, key: '', tile: null },
-    { tx: -999999, ty: -999999, key: '', tile: null },
-    { tx: -999999, ty: -999999, key: '', tile: null }
+    { tx: -999999, ty: -999999, key: 0, tile: null },
+    { tx: -999999, ty: -999999, key: 0, tile: null },
+    { tx: -999999, ty: -999999, key: 0, tile: null },
+    { tx: -999999, ty: -999999, key: 0, tile: null }
   ]);
-  const canvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
-  const dirtyTilesRef = useRef<Set<string>>(new Set());
-  const visibleTilesRef = useRef<Set<string>>(new Set());
-  const reconstructionQueueRef = useRef<{key: string, startN: number, endN: number, currentN: number, x: number, y: number, k: number, i: number, t: number}[]>([]);
+  const canvasCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const dirtyTilesRef = useRef<Set<number>>(new Set());
+  const visibleTilesRef = useRef<Set<number>>(new Set());
+  const reconstructionQueueRef = useRef<{key: number, mip: number, tx: number, ty: number, startN: number, endN: number, currentN: number, x: number, y: number, k: number, i: number, t: number}[]>([]);
   const isReconstructingRef = useRef(false);
   const {
     historyCount,
@@ -75,7 +75,7 @@ export const ChessCanvas: React.FC = () => {
   const drawRef = useRef<(() => void) | null>(null);
   const renderPendingRef = useRef<boolean>(false);
   const timerRef = useRef<any>(null);
-  const displayMemoryRef = useRef<number>(0);
+  const displayMemoryRef = useRef<{ mip0: number; mip1: number; mip2: number; mip3: number; total: number }>({ mip0: 0, mip1: 0, mip2: 0, mip3: 0, total: 0 });
 
   const paletteRef = useRef<Map<number, [number, number, number]>>(new Map());
   useEffect(() => {
@@ -119,7 +119,7 @@ export const ChessCanvas: React.FC = () => {
     const startFrameTime = performance.now();
     const budget = 4; // 4ms per frame to keep UI smooth
 
-    const [mip, tx, ty] = task.key.split(':').map(Number);
+    const { mip, tx, ty } = task;
     const tile = tilesRef.current.get(task.key);
     const level = MIP_LEVELS[mip];
 
@@ -207,15 +207,23 @@ export const ChessCanvas: React.FC = () => {
   }, []);
 
   const getTile = (mip: number, tx: number, ty: number, skipReconstruction: boolean = false): any => {
-    const key = `${mip}:${tx}:${ty}`;
+    const key = getTileKey(mip, tx, ty);
     let tile = tilesRef.current.get(key);
     if (!tile) {
+      if (typeof displayMemoryRef.current === 'number') {
+        displayMemoryRef.current = { mip0: (displayMemoryRef.current as number), mip1: 0, mip2: 0, mip3: 0, total: (displayMemoryRef.current as number) };
+      }
       if (mip === 0) {
         tile = new Uint8Array(TILE_SIZE * TILE_SIZE);
-        displayMemoryRef.current += 262144;
+        displayMemoryRef.current.mip0 += 262144;
+        displayMemoryRef.current.total += 262144;
       } else {
         tile = new Uint16Array(TILE_SIZE * TILE_SIZE * 4);
-        displayMemoryRef.current += 2097152;
+        const size = 2097152;
+        if (mip === 1) displayMemoryRef.current.mip1 += size;
+        else if (mip === 2) displayMemoryRef.current.mip2 += size;
+        else if (mip === 3) displayMemoryRef.current.mip3 += size;
+        displayMemoryRef.current.total += size;
       }
       tilesRef.current.set(key, tile);
       
@@ -250,7 +258,7 @@ export const ChessCanvas: React.FC = () => {
         let i = startN - m;
 
         reconstructionQueueRef.current.push({
-          key, startN, endN, currentN: startN, x, y, k, i, t
+          key, mip, tx, ty, startN, endN, currentN: startN, x, y, k, i, t
         });
         startReconstruction();
       }
@@ -286,7 +294,7 @@ export const ChessCanvas: React.FC = () => {
       if (c0.tx !== tx0 || c0.ty !== ty0 || !c0.tile) {
         c0.tx = tx0;
         c0.ty = ty0;
-        c0.key = `0:${tx0}:${ty0}`;
+        c0.key = getTileKey(0, tx0, ty0);
         c0.tile = getTile(0, tx0, ty0, true);
         dirtyTilesRef.current.add(c0.key);
       }
@@ -301,7 +309,7 @@ export const ChessCanvas: React.FC = () => {
       if (c1.tx !== tx1 || c1.ty !== ty1 || !c1.tile) {
         c1.tx = tx1;
         c1.ty = ty1;
-        c1.key = `1:${tx1}:${ty1}`;
+        c1.key = getTileKey(1, tx1, ty1);
         c1.tile = getTile(1, tx1, ty1, true);
         dirtyTilesRef.current.add(c1.key);
       }
@@ -329,7 +337,7 @@ export const ChessCanvas: React.FC = () => {
       if (c2.tx !== tx2 || c2.ty !== ty2 || !c2.tile) {
         c2.tx = tx2;
         c2.ty = ty2;
-        c2.key = `2:${tx2}:${ty2}`;
+        c2.key = getTileKey(2, tx2, ty2);
         c2.tile = getTile(2, tx2, ty2, true);
         dirtyTilesRef.current.add(c2.key);
       }
@@ -357,7 +365,7 @@ export const ChessCanvas: React.FC = () => {
       if (c3.tx !== tx3 || c3.ty !== ty3 || !c3.tile) {
         c3.tx = tx3;
         c3.ty = ty3;
-        c3.key = `3:${tx3}:${ty3}`;
+        c3.key = getTileKey(3, tx3, ty3);
         c3.tile = getTile(3, tx3, ty3, true);
         dirtyTilesRef.current.add(c3.key);
       }
@@ -407,10 +415,10 @@ export const ChessCanvas: React.FC = () => {
     if (historyCount === 0) {
       tilesRef.current = new Map();
       tileCacheRef.current = [
-        { tx: -999999, ty: -999999, key: '', tile: null },
-        { tx: -999999, ty: -999999, key: '', tile: null },
-        { tx: -999999, ty: -999999, key: '', tile: null },
-        { tx: -999999, ty: -999999, key: '', tile: null }
+        { tx: -999999, ty: -999999, key: 0, tile: null },
+        { tx: -999999, ty: -999999, key: 0, tile: null },
+        { tx: -999999, ty: -999999, key: 0, tile: null },
+        { tx: -999999, ty: -999999, key: 0, tile: null }
       ];
       setTilesMap(tilesRef.current);
       canvasCacheRef.current = new Map();
@@ -418,8 +426,8 @@ export const ChessCanvas: React.FC = () => {
       visibleTilesRef.current = new Set();
       reconstructionQueueRef.current = [];
       isReconstructingRef.current = false;
-      displayMemoryRef.current = 0;
-      setDisplayMemory(0);
+      displayMemoryRef.current = { mip0: 0, mip1: 0, mip2: 0, mip3: 0, total: 0 };
+      setDisplayMemory({ mip0: 0, mip1: 0, mip2: 0, mip3: 0, total: 0 });
       lastProcessedN.current = -1;
       draw();
     }
@@ -530,17 +538,17 @@ export const ChessCanvas: React.FC = () => {
     const tileTop = Math.floor(mipTop / TILE_SIZE);
     const tileBottom = Math.floor(mipBottom / TILE_SIZE);
 
-    const newVisibleTiles = new Set<string>();
+    const newVisibleTiles = new Set<number>();
     for (let tx = tileLeft; tx <= tileRight; tx++) {
       for (let ty = tileTop; ty <= tileBottom; ty++) {
-        newVisibleTiles.add(`${mipLevel}:${tx}:${ty}`);
+        newVisibleTiles.add(getTileKey(mipLevel, tx, ty));
       }
     }
     visibleTilesRef.current = newVisibleTiles;
 
     for (let tx = tileLeft; tx <= tileRight; tx++) {
       for (let ty = tileTop; ty <= tileBottom; ty++) {
-        const key = `${mipLevel}:${tx}:${ty}`;
+        const key = getTileKey(mipLevel, tx, ty);
         const tile = getTile(mipLevel, tx, ty);
         if (tile) {
           let cachedCanvas = canvasCacheRef.current.get(key);
