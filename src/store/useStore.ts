@@ -13,14 +13,6 @@ export const resetBuffer = () => {
   spiralPieces.reset();
 };
 
-export interface DisplayMemoryMetrics {
-  mip0: number;
-  mip1: number;
-  mip2: number;
-  mip3: number;
-  total: number;
-}
-
 export interface EngineStore {
   players: Player[];
   isPlaying: boolean;
@@ -32,15 +24,13 @@ export interface EngineStore {
   lastBatchResults: Int32Array | null;
   worker: Worker | null;
   lastDuration: number;
-  lastSearchDepth: number;
   lastDrawTime: number;
   lastSyncTime: number;
   lastMipLevel: number;
   memoryUsed: number;
-  displayMemory: DisplayMemoryMetrics;
+  displayMemory: number;
   activeTiles: number;
   pooledTiles: number;
-  freedTiles: number;
   totalTime: number;
   voidColor: string;
   playfieldColor: string;
@@ -57,7 +47,7 @@ export interface EngineStore {
   setVoidColor: (color: string) => void;
   setPlayfieldColor: (color: string) => void;
   setDrawTime: (time: number) => void;
-  setDisplayMemory: (mem: DisplayMemoryMetrics) => void;
+  setDisplayMemory: (mem: number) => void;
   setMipLevel: (level: number) => void;
   setTilesMap: (map: Map<number, any>) => void;
 
@@ -92,15 +82,13 @@ export const useStore = create<EngineStore>()(
     lastBatchResults: null,
     worker: null,
     lastDuration: 0,
-    lastSearchDepth: 0,
     lastDrawTime: 0,
     lastSyncTime: 0,
     lastMipLevel: 0,
     memoryUsed: 0,
-    displayMemory: { mip0: 0, mip1: 0, mip2: 0, mip3: 0, total: 0 },
+    displayMemory: 0,
     activeTiles: 0,
     pooledTiles: 0,
-    freedTiles: 0,
     totalTime: 0,
     voidColor: '#0a0a0c',
     playfieldColor: '#d6d6d6',
@@ -116,7 +104,7 @@ export const useStore = create<EngineStore>()(
       newWorker.onmessage = (e) => {
         const { type, payload } = e.data;
         if (type === 'RESULTS') {
-          const { results, count, bounds, duration, completed, avgSearchDepth, lowestUnoccupiedN, memoryUsed, activeTiles, pooledTiles, freedTiles } = payload;
+          const { results, count, bounds, duration, completed, lowestUnoccupiedN, memoryUsed, activeTiles, pooledTiles } = payload;
           const pieces = new Int32Array(results);
 
           const startSync = performance.now();
@@ -151,10 +139,8 @@ export const useStore = create<EngineStore>()(
             memoryUsed,
             activeTiles,
             pooledTiles,
-            freedTiles,
             totalTime: get().totalTime + duration,
             lastDuration: duration,
-            lastSearchDepth: avgSearchDepth,
             lastSyncTime: endSync - startSync,
             bounds,
             isCompleted: completed
@@ -169,7 +155,6 @@ export const useStore = create<EngineStore>()(
             memoryUsed: 0,
             activeTiles: 0,
             pooledTiles: 0,
-            freedTiles: 0,
             totalTime: 0,
             isCompleted: false,
             bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 }
@@ -187,7 +172,6 @@ export const useStore = create<EngineStore>()(
         isPlaying: false,
         isCompleted: false,
         lastDuration: 0,
-        lastSearchDepth: 0,
         bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 }
       });
       resetBuffer();

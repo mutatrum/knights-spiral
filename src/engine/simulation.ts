@@ -105,12 +105,15 @@ export interface SimulationState {
   maxY: number;
 }
 
+const DANGER_SHIFT = 7;
+const DANGER_MASK = (1 << DANGER_SHIFT) - 1;
+const DANGER_AREA = 1 << (DANGER_SHIFT * 2);
+
 export class SimulationEngine {
   private players: Player[];
   private state: SimulationState;
   private attackOffsets: Map<number, [number, number][]>;
   private playerBitMap: Map<number, number> = new Map();
-  private totalFreedTiles: number = 0;
   private lastTileKey: number = -1;
   private lastDangerTile: Uint16Array | null = null;
   private cursor = { n: -1, x: 0, y: 0, k: 0, i: 0, t: 0 };
@@ -198,8 +201,8 @@ export class SimulationEngine {
   }
 
   private getDangerValue(x: number, y: number): number {
-    const tx = x >> 9;
-    const ty = y >> 9;
+    const tx = x >> DANGER_SHIFT;
+    const ty = y >> DANGER_SHIFT;
     const key = (tx << 16) | (ty & 0xFFFF);
 
     if (key !== this.lastTileKey) {
@@ -209,7 +212,7 @@ export class SimulationEngine {
     }
 
     if (!this.lastDangerTile) return 0;
-    return this.lastDangerTile[(x & 511) + ((y & 511) << 9)];
+    return this.lastDangerTile[(x & DANGER_MASK) + ((y & DANGER_MASK) << DANGER_SHIFT)];
   }
 
   private recordPiece(x: number, y: number, playerId: number) {
@@ -220,8 +223,8 @@ export class SimulationEngine {
       const off = offsets[j];
       const ax = x + off[0];
       const ay = y + off[1];
-      const atx = ax >> 9;
-      const aty = ay >> 9;
+      const atx = ax >> DANGER_SHIFT;
+      const aty = ay >> DANGER_SHIFT;
       const aKey = (atx << 16) | (aty & 0xFFFF);
 
       let dangerTile;
@@ -233,14 +236,14 @@ export class SimulationEngine {
           if (this.freeTilePool.length > 0) {
             dangerTile = this.freeTilePool.pop()!;
           } else {
-            dangerTile = new Uint16Array(262144);
+            dangerTile = new Uint16Array(DANGER_AREA);
           }
           this.state.dangerGrid.set(aKey, dangerTile);
         }
         this.lastTileKey = aKey;
         this.lastDangerTile = dangerTile;
       }
-      dangerTile[(ax & 511) + ((ay & 511) << 9)] |= playerBit;
+      dangerTile[(ax & DANGER_MASK) + ((ay & DANGER_MASK) << DANGER_SHIFT)] |= playerBit;
     }
   }
 
@@ -303,7 +306,7 @@ export class SimulationEngine {
   }
 
   public getState() {
-    const dangerMem = (this.state.dangerGrid.size + this.freeTilePool.length) * 524288; // 512*512*2 bytes per buffer
+    const dangerMem = (this.state.dangerGrid.size + this.freeTilePool.length) * (DANGER_AREA * 2); // 2 bytes per Uint16
     const bitsetMem = this.state.occupationBitset.allocatedBytes;
     const bufferMem = 80_000_000; // 4 transferable buffers in worker pool (20MB each)
 
@@ -313,7 +316,6 @@ export class SimulationEngine {
       memoryUsed: dangerMem + bitsetMem + bufferMem, // Total bytes
       activeTiles: this.state.dangerGrid.size,
       pooledTiles: this.freeTilePool.length,
-      freedTiles: this.totalFreedTiles,
       bounds: {
         minX: this.state.minX,
         maxX: this.state.maxX,
@@ -331,8 +333,9 @@ export class SimulationEngine {
       const tx = (key >> 16);
       const ty = (key << 16) >> 16;
 
-      const maxX = Math.max(Math.abs(tx * 512), Math.abs((tx + 1) * 512 - 1));
-      const maxY = Math.max(Math.abs(ty * 512), Math.abs((ty + 1) * 512 - 1));
+      const DANGER_SIZE = 1 << DANGER_SHIFT;
+      const maxX = Math.max(Math.abs(tx * DANGER_SIZE), Math.abs((tx + 1) * DANGER_SIZE - 1));
+      const maxY = Math.max(Math.abs(ty * DANGER_SIZE), Math.abs((ty + 1) * DANGER_SIZE - 1));
       const maxDist = Math.max(maxX, maxY);
       const maxN = (2 * maxDist + 1) * (2 * maxDist + 1);
 
@@ -349,18 +352,16 @@ export class SimulationEngine {
       }
       const tile = this.state.dangerGrid.get(key);
       if (tile) {
-        if (this.freeTilePool.length < 1000) { // Limit pool to 1000 tiles (~500MB max)
+        if (this.freeTilePool.length < 5000) { // Limit pool to 5000 tiles (~40MB max)
           tile.fill(0);
           this.freeTilePool.push(tile);
         }
       }
       this.state.dangerGrid.delete(key);
-      this.totalFreedTiles++;
     }
   }
 
   public reset() {
-    this.totalFreedTiles = 0;
     this.cursor.n = -1;
     this.lastTileKey = -1;
     this.lastDangerTile = null;

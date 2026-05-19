@@ -5,65 +5,27 @@
 export interface PieceDefinition {
   name: string;
   leap: { a: number; b: number }; // (a, b) vector
-  description: string;
 }
 
 export const PIECE_LIBRARY: Record<string, PieceDefinition> = {
-  KNIGHT: {
-    name: 'Knight',
-    leap: { a: 2, b: 1 },
-    description: 'The classic L-jump.',
-  },
-  FERS: {
-    name: 'Fers',
-    leap: { a: 1, b: 1 },
-    description: 'A one-square diagonal leap.',
-  },
-  VAZIR: {
-    name: 'Vazir',
-    leap: { a: 1, b: 0 },
-    description: 'A one-square orthogonal leap.',
-  },
-  CAMEL: {
-    name: 'Camel',
-    leap: { a: 3, b: 1 },
-    description: 'A long L-jump.',
-  },
-  ZEBRA: {
-    name: 'Zebra',
-    leap: { a: 3, b: 2 },
-    description: 'A longer, sharper L-jump.',
-  },
-  ANTELOPE: {
-    name: 'Antelope',
-    leap: { a: 4, b: 3 },
-    description: 'A very long leap.',
-  },
-  ELAND: {
-    name: 'Eland',
-    leap: { a: 5, b: 3 },
-    description: 'A massive 5x3 leap.',
-  },
-  SATRAP: {
-    name: 'Satrap',
-    leap: { a: 2, b: 0 },
-    description: 'A two-square orthogonal leap.',
-  },
-  ASPBAD: {
-    name: 'Aspbad',
-    leap: { a: 2, b: 2 },
-    description: 'A two-square diagonal leap.',
-  },
-  SPEHBED: {
-    name: 'Spehbed',
-    leap: { a: 3, b: 0 },
-    description: 'A three-square orthogonal leap.',
-  },
-  MARZBAN: {
-    name: 'Marzban',
-    leap: { a: 3, b: 3 },
-    description: 'A three-square diagonal leap.',
-  },
+  VAZIR: { name: 'Vazir', leap: { a: 1, b: 0 } },
+  FERS: { name: 'Fers', leap: { a: 1, b: 1 } },
+  SATRAP: { name: 'Satrap', leap: { a: 2, b: 0 } },
+  KNIGHT: { name: 'Knight', leap: { a: 2, b: 1 } },
+  ASPBAD: { name: 'Aspbad', leap: { a: 2, b: 2 } },
+  SPEHBED: { name: 'Spehbed', leap: { a: 3, b: 0 } },
+  CAMEL: { name: 'Camel', leap: { a: 3, b: 1 } },
+  ZEBRA: { name: 'Zebra', leap: { a: 3, b: 2 } },
+  MARZBAN: { name: 'Marzban', leap: { a: 3, b: 3 } },
+  GIRAFFE: { name: 'Giraffe', leap: { a: 4, b: 1 } },
+  STAG: { name: 'Stag', leap: { a: 4, b: 2 } },
+  ANTELOPE: { name: 'Antelope', leap: { a: 4, b: 3 } },
+  RHINOCEROS: { name: 'Rhinoceros', leap: { a: 4, b: 4 } },
+  ZEMEL: { name: 'Zemel', leap: { a: 5, b: 1 } },
+  SATYR: { name: 'Satyr', leap: { a: 5, b: 2 } },
+  ELAND: { name: 'Eland', leap: { a: 5, b: 3 } },
+  OKAPI: { name: 'Okapi', leap: { a: 5, b: 4 } },
+  FLAMINGO: { name: 'Flamingo', leap: { a: 5, b: 5 } },
 };
 
 /**

@@ -22,7 +22,6 @@ function App() {
     playfieldColor,
     setPlayfieldColor,
     lastDuration,
-    lastSearchDepth,
     lastDrawTime,
     lastSyncTime,
     lastMipLevel,
@@ -31,8 +30,7 @@ function App() {
     displayMemory,
     totalTime,
     activeTiles,
-    pooledTiles,
-    freedTiles
+    pooledTiles
   } = useStore();
 
   const lastHistoryCount = useRef(historyCount);
@@ -191,42 +189,20 @@ function App() {
                 <span>{lastMipLevel}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span>Search Depth:</span>
-                <span>{Math.round(lastSearchDepth).toLocaleString()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
                 <span>Engine Memory:</span>
                 <span>{(memoryUsed / 1024 / 1024).toFixed(1)} MB</span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.75rem', gap: '2px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Display Memory:</span>
-                  <span>{(displayMemory.total / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
-                  <span>├─ MIP 0 (1x):</span>
-                  <span>{(displayMemory.mip0 / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
-                  <span>├─ MIP 1 (0.25x):</span>
-                  <span>{(displayMemory.mip1 / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
-                  <span>├─ MIP 2 (0.06x):</span>
-                  <span>{(displayMemory.mip2 / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', paddingLeft: '8px' }}>
-                  <span>└─ MIP 3 (0.015x):</span>
-                  <span>{(displayMemory.mip3 / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>Display Memory:</span>
+                <span>{(displayMemory / 1024 / 1024).toFixed(1)} MB</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span>Buffer Memory (Allocated):</span>
+                <span>Buffer Memory:</span>
                 <span>{(spiralPieces.allocatedBytes / 1024 / 1024).toFixed(1)} MB</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span>Active/Pooled/Recycled:</span>
-                <span>{activeTiles} / {pooledTiles} / {freedTiles}</span>
+                <span>Active/Pooled:</span>
+                <span>{activeTiles} / {pooledTiles}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
                 <span>Work Time:</span>

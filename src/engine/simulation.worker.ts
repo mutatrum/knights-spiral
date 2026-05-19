@@ -46,6 +46,11 @@ function runLoop() {
       currentBuffer[actualCount * 5 + 4] = result.searchDepth;
       totalSearchDepth += result.searchDepth;
       actualCount++;
+
+      // Time-based step size limiter: Cap batch duration at 16ms (60 FPS) for smooth wavefront streaming
+      if ((actualCount & 2047) === 0 && performance.now() - loopStartTime >= 32) {
+        break;
+      }
     } else {
       completed = true;
       running = false;
@@ -69,11 +74,9 @@ function runLoop() {
         memoryUsed: state.memoryUsed,
         activeTiles: state.activeTiles,
         pooledTiles: state.pooledTiles,
-        freedTiles: state.freedTiles,
         bounds: state.bounds,
         duration: duration,
-        completed: completed,
-        avgSearchDepth: actualCount > 0 ? totalSearchDepth / actualCount : 0
+        completed: completed
       }
     }, [transferredBuffer.buffer]);
   } else {
