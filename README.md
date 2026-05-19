@@ -1,73 +1,38 @@
-# React + TypeScript + Vite
+# Knight's Spiral
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Knight's Spiral is an interactive, high-performance visualization engine designed to explore emergent mathematical patterns on an infinite grid. The project is inspired by the Numberphile exploration of chessboard patterns based on Jonas Karlsson's simulations. By placing pieces on the lowest available square that is not under attack, this simulation demonstrates how simple, deterministic rules can generate complex, fractal-like structures.
 
-Currently, two official plugins are available:
+## Simulation Rules
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The simulation operates on a Ulam-like square spiral grid, where each cell is mapped to a positive integer starting from the center of the coordinate system. During a turn, the simulation searches for the lowest available integer that is not currently occupied and is not under attack by any opponent. The active player then places their piece on that square, and the turn advances to the next player.
 
-## React Compiler
+## Features and Architecture
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The engine uses background Web Workers to offload heavy calculations, keeping the main thread responsive during intensive runs. A custom quadtree spatial indexing structure handles the rendering of millions of pieces, allowing smooth panning and zooming on an infinite 2D canvas at 60 frames per second. 
 
-## Expanding the ESLint configuration
+You can experiment with classic pieces like the Knight, Zebra, Antelope, Vazir, and Fers, or configure custom move vectors. The interface includes presets for classic scenarios like the Zebra Crossing and the Fortress, alongside real-time controls for simulation speed, player configurations, and color palettes.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Getting Started
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+To run the project locally, clone the repository, install the dependencies, and start the development server.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+git clone https://github.com/mutatrum/knights-spiral.git
+cd knights
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The development server runs locally, and you can view the application in your browser. You can build the production application with the build command:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
 ```
+
+## GitHub Pages Deployment
+
+This project includes a preconfigured GitHub Actions workflow for automatic deployment. When you push your code to the master branch, the workflow builds the application and deploys the assets to GitHub Pages. To activate this, push the repository to GitHub, open the repository settings, go to the Pages tab, and select GitHub Actions as the build and deployment source.
+
+## Credits and Inspiration
+
+The core concept of this project originates from the Numberphile video [Amazing Chessboard Patterns](https://www.youtube.com/watch?v=STX77JlOjGs). The mathematical research and original simulations were conducted by [Jonas Karlsson](https://jonka364.github.io/). The implementation is released under the MIT License.
